@@ -1,63 +1,95 @@
 #!/bin/bash
-
-# -----------------------------------------------------------------------------
-# Script: generate_events_tsv.sh
 #
-# Description:
-# This script generates BIDS-compliant events TSV files from raw timing data 
-# stored in text files. These TSV files can be used in various neuroimaging 
-# analysis pipelines (e.g., FSL FEAT).
+################################################################################
+# generate_events_tsv.sh
 #
-# Key Features:
-# - Prompts the user for a custom task name to include in output TSV filenames.
-# - Allows user to select a directory under sourcedata/ if multiple directories 
-#   exist (excluding 'Dicom', 'Nifti', 'code', and hidden directories).
-# - Reads raw text files with onset/duration/weight values per condition and 
-#   merges them into sorted events TSV files.
-# - Maintains a clean and minimal output log, improving readability.
+# Purpose:
+#   This script generates BIDS-compliant events TSV files from raw timing data
+#   stored in text files. The TSV files are placed in each subject's func/
+#   directory under <Project>/sub-XX/ses-YY/func.
 #
 # Usage:
-# ./generate_events_tsv.sh [--base-dir <project_directory>] [--session <session_name>] \
-#                          [--conditions <condition1,condition2,...>] \
-#                          [--tasks <task1,task2,...>] <subject_id1> [<subject_id2> ...]
+#   generate_events_tsv.sh [--base-dir <project_directory>]
+#                          [--session <session_name>]
+#                          [--conditions <condition1,condition2,...>]
+#                          [--tasks <task1,task2,...>]
+#                          <subject_id1> [<subject_id2> ...]
 #
-# Required:
-# - At least one subject ID (e.g., sub-01).
+# Options:
+#   --base-dir <dir>      Base project directory (defaults to two levels up
+#                         from script if not provided).
+#   --session <name>      Session name (e.g. ses-01). Defaults to 'ses-01'.
+#   --conditions <list>   Comma-separated list of conditions (e.g., face,place,pair).
+#   --tasks <list>        Comma-separated list of tasks (e.g., encoding,recog).
+#   -h, --help            Show usage and exit.
 #
-# Optional Arguments:
-# --base-dir:    Base project directory (defaults to two levels up from script if not provided).
-# --session:     Session name (e.g., ses-01). Defaults to 'ses-01'.
-# --conditions:  Comma-separated conditions (e.g., face,place,pair).
-# --tasks:       Comma-separated tasks (e.g., encoding,recog).
+# Usage Examples:
+#   1) generate_events_tsv.sh --session ses-01 sub-01
+#      - Prompts for the output task name (e.g., 'YourTaskName'),
+#        then looks for run-based .txt files in:
+#        <Project>/sourcedata/<chosen_dir>/sub-01/ses-01/
+#      - Creates TSV files under <Project>/sub-01/ses-01/func/.
 #
-# Interactive Prompts:
-# - Task name: User is asked for a valid, space-free task name for the TSV filename (e.g., 'assocmemory').
-# - Directory selection: If multiple directories are available under sourcedata/, 
-#   the user chooses one. The script re-prompts if invalid input is provided.
+#   2) generate_events_tsv.sh --base-dir /path/to/project --conditions cond1,cond2 sub-02 sub-03
+#      - Uses '/path/to/project' as the base directory,
+#        with conditions 'cond1' and 'cond2' if the script matches them
+#        in the filenames. Processes both sub-02 and sub-03.
 #
-# Example:
-# ./generate_events_tsv.sh --session ses-01 sub-02 sub-03
-# Will prompt for a task name, select a directory under sourcedata/, process 
-# events for sub-02 and sub-03 in ses-01, and generate the TSV files.
+#   3) generate_events_tsv.sh --session ses-02 --tasks task1,task2 sub-001
+#      - Processes subject 'sub-001' in session 'ses-02' and attempts to parse
+#        'task1'/'task2' from filenames if they match the pattern.
 #
-# Logging:
-# - A log file is created in <base-dir>/code/logs/ with details of the process.
+# Notes:
+#   - The script prompts for a custom output task name (for the TSV filenames).
+#   - It detects multiple directories under sourcedata/ and prompts to choose
+#     one if more than one is present (excluding Dicom, Nifti, code).
+#   - It reads raw timing text files named like: <task>_response_data_<cond>_run<N>.txt
+#     and merges them into sorted TSV files with columns: onset, duration, trial_type, weight.
+#   - Each subject can have zero or multiple runs per session. The script auto-detects run numbers
+#     by matching *_run[0-9]*.txt file patterns.
+#   - Subject IDs can be anything like sub-01, sub-007, sub-XYZ. The script simply treats them
+#     as folder names.
+#   - A log file is created in <base_dir>/code/logs/, and the script copies itself to
+#     <base_dir>/code/scripts.
 #
-# After execution, the script attempts to copy itself into <base-dir>/code/scripts/.
-#
-# -----------------------------------------------------------------------------
+#################################################################################
 
-# Initialize variables
+# ------------------------------------------------------------------------------
+# usage() function
+# ------------------------------------------------------------------------------
+usage() {
+    echo "
+Usage: $(basename "$0") [--base-dir <project_directory>] [--session <session_name>] [--conditions <cond1,cond2,...>] [--tasks <task1,task2,...>] <subject_id1> [<subject_id2> ...]
+
+Options:
+  --base-dir <dir>      Base project directory (defaults to two levels up from script).
+  --session <name>      Session name (e.g. ses-01). Defaults to 'ses-01'.
+  --conditions <list>   Comma-separated conditions (e.g., cond1,cond2,cond3).
+  --tasks <list>        Comma-separated tasks (e.g., task1,task2).
+  -h, --help            Show usage and exit.
+
+Examples:
+  $(basename "$0") --session ses-01 sub-02 sub-03
+  $(basename "$0") --base-dir /path/to/project --conditions cond1,cond2,cond3 sub-01
+"
+}
+
+# ------------------------------------------------------------------------------
+# Parse command-line arguments
+# ------------------------------------------------------------------------------
 BASE_DIR=""
 SESSION=""
 CONDITIONS=""
 TASKS=""
 SUBJECT_IDS=()
 
-# Parse command-line arguments
 while [[ $# -gt 0 ]]; do
     key="$1"
     case $key in
+        -h|--help)
+            usage
+            exit 0
+            ;;
         --base-dir)
             BASE_DIR="$2"
             shift
@@ -86,6 +118,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ------------------------------------------------------------------------------
+# Script directory and defaults
+# ------------------------------------------------------------------------------
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 
@@ -101,8 +136,7 @@ fi
 
 # Ensure at least one subject ID is provided
 if [ "${#SUBJECT_IDS[@]}" -lt 1 ]; then
-    echo "Usage: $0 [--base-dir <project_directory>] [--session <session_name>] [--conditions <condition1,condition2,...>] [--tasks <task1,task2,...>] <subject_id1> [<subject_id2> ...]"
-    echo "Example: $0 --session ses-01 --conditions face,place,pair sub-02 sub-03"
+    usage
     exit 1
 fi
 
@@ -117,8 +151,11 @@ if [ -n "$TASKS" ]; then
     IFS=',' read -r -a tasks <<< "$TASKS"
 fi
 
-# Prompt user for output task name (for TSV filenames)
+# ------------------------------------------------------------------------------
+# Prompt for output task name (for TSV filenames)
+# ------------------------------------------------------------------------------
 while true; do
+    echo ""
     read -p "Enter a valid task output name (no spaces or special characters): " OUTPUT_TASK_NAME
     # Trim leading/trailing whitespace
     OUTPUT_TASK_NAME="$(echo -e "${OUTPUT_TASK_NAME}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
@@ -129,17 +166,20 @@ while true; do
     fi
 done
 
-# Determine available directories under sourcedata (excluding Dicom/Nifti/code/hidden)
+# ------------------------------------------------------------------------------
+# Determine which subdirectory under sourcedata/ will hold the raw text files
+# ------------------------------------------------------------------------------
 AVAIL_DIRS=()
 for d in "$BASE_DIR/sourcedata/"*/; do
     dir_name=$(basename "$d")
+    # Exclude certain directories
     if [[ "$dir_name" != "Dicom" && "$dir_name" != "Nifti" && "$dir_name" != "code" && "$dir_name" != "" && ! "$dir_name" =~ ^\. ]]; then
         AVAIL_DIRS+=("$dir_name")
     fi
 done
 
 if [ ${#AVAIL_DIRS[@]} -eq 0 ]; then
-    echo "No directories found under sourcedata (other than Dicom/Nifti) to process raw text files."
+    echo "No directories found under sourcedata (other than Dicom/Nifti/code/hidden) to process raw text files."
     exit 1
 elif [ ${#AVAIL_DIRS[@]} -eq 1 ]; then
     CHOSEN_DIR="${AVAIL_DIRS[0]}"
@@ -165,12 +205,19 @@ else
     echo "Using directory: $CHOSEN_DIR"
 fi
 
+# ------------------------------------------------------------------------------
+# Setup logging
+# ------------------------------------------------------------------------------
 LOG_DIR="${BASE_DIR}/code/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/$(basename $0)_$(date +%Y-%m-%d_%H-%M-%S).log"
 echo "Log file created at $LOG_FILE" > "$LOG_FILE"
 
-# Function to process and combine conditions into a single TSV file
+# ------------------------------------------------------------------------------
+# Function: process_and_combine_conditions
+#   For a given subject, run number, merges all *_runN*.txt files into one
+#   BIDS-compliant events TSV
+# ------------------------------------------------------------------------------
 process_and_combine_conditions() {
     local subject_id=$1
     local run_num=$2
@@ -178,7 +225,6 @@ process_and_combine_conditions() {
     local output_dir="${BASE_DIR}/${subject_id}/${SESSION}/func"
 
     if [ ! -d "$txt_dir" ]; then
-        # Added a newline after the error message for readability
         echo -e "Text directory not found for $subject_id: $txt_dir\n" | tee -a "$LOG_FILE"
         return
     fi
@@ -206,12 +252,11 @@ process_and_combine_conditions() {
         return
     fi
 
-    # Print run header for clarity
     echo -e "\n[Run $run_num]" | tee -a "$LOG_FILE"
 
     for file in $files; do
         filename=$(basename "$file")
-        # Attempt to parse task and condition from filename
+        # Parse task and condition from filename
         if [[ $filename =~ ^(.*)_response_data_(.*)_run${run_num}.*\.txt$ ]]; then
             local parsed_task="${BASH_REMATCH[1]}"
             local parsed_condition="${BASH_REMATCH[2]}"
@@ -236,14 +281,14 @@ process_and_combine_conditions() {
     rm "$combined_file"
 }
 
-# Main processing loop
+# ------------------------------------------------------------------------------
+# Main processing loop: each subject, find runs, create events TSVs
+# ------------------------------------------------------------------------------
 for subject_id in "${SUBJECT_IDS[@]}"; do
     echo -e "\n=== Processing subject: $subject_id ===" | tee -a "$LOG_FILE"
 
     txt_dir="${BASE_DIR}/sourcedata/${CHOSEN_DIR}/${subject_id}/${SESSION}"
-
     if [ ! -d "$txt_dir" ]; then
-        # Added a newline after the message here as well for consistency
         echo -e "Text directory not found for $subject_id: $txt_dir\n" | tee -a "$LOG_FILE"
         continue
     fi
@@ -263,7 +308,9 @@ for subject_id in "${SUBJECT_IDS[@]}"; do
     echo -e "\n----------------------------------------" | tee -a "$LOG_FILE"
 done
 
+# ------------------------------------------------------------------------------
 # Move the script to BASE_DIR/code/scripts after execution if not already there
+# ------------------------------------------------------------------------------
 DEST_DIR="${BASE_DIR}/code/scripts"
 if [ "$SCRIPT_DIR" != "$DEST_DIR" ]; then
     mkdir -p "$DEST_DIR"

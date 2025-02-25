@@ -1,8 +1,38 @@
 #!/bin/bash
+#
+###############################################################################
+# run_synthstrip_extraction.sh
+#
+# Purpose:
+#   Applies SynthStrip (from FreeSurfer) to T1w images, optionally reorienting
+#   them with fslreorient2std first. Outputs go to `derivatives/freesurfer/`.
+#
+# Usage:
+#   run_synthstrip_extraction.sh --base-dir <dir> [options] [SUBJECTS...]
+#
+# Options:
+#   --base-dir <dir>     Base directory of the project (required)
+#   --reorient           Apply fslreorient2std to T1w images
+#   --session <ses>      Session(s) to process (e.g., ses-01 ses-02)
+#   -h, --help           Show usage info and exit
+#
+# Usage Examples:
+#   1) run_synthstrip_extraction.sh --base-dir /myproj sub-01 sub-02
+#   2) run_synthstrip_extraction.sh --base-dir /myproj --reorient
+#   3) run_synthstrip_extraction.sh --base-dir /myproj --session ses-01
+#
+# Requirements:
+#   - FreeSurfer's `mri_synthstrip` in your PATH
+#   - T1w files named <sub>_<ses>_T1w.nii.gz in anat/
+#
+# Notes:
+#   - If no SUBJECTS are provided, searches subject directories with known prefixes
+#     (sub, subj, participant, etc.).
+#   - Outputs go in <base-dir>/derivatives/freesurfer/<sub>/<ses>/anat
+#   - Creates logs in <base-dir>/code/logs.
+#
+###############################################################################
 
-# SynthStrip Skull Stripping Script (run_synthstrip_extraction.sh)
-
-# Default values
 BASE_DIR=""
 REORIENT="no"
 SESSIONS=()
@@ -10,17 +40,17 @@ SUBJECTS=()
 SUBJECT_PREFIXES=("sub" "subj" "participant" "P" "pilot" "pilsub")
 
 usage() {
-    echo "Usage: $0 --base-dir BASE_DIR [options] [--session SESSIONS...] [SUBJECTS...]"
+    echo "Usage: $0 --base-dir <BASE_DIR> [options] [--session SESSIONS...] [SUBJECTS...]"
     echo ""
     echo "Options:"
-    echo "  --base-dir BASE_DIR       Base directory of the project (required)"
-    echo "  --reorient                Apply fslreorient2std to T1w images"
-    echo "  --session SESSIONS        Sessions to process (e.g., ses-01 ses-02)"
-    echo "  SUBJECTS                  Subjects to process (e.g., sub-01 sub-02)"
+    echo "  --base-dir <dir>  Base directory of the project (required)"
+    echo "  --reorient        Apply fslreorient2std to T1w images"
+    echo "  --session <ses>   Process specific session(s) (e.g. ses-01)"
+    echo "  -h, --help        Show this help message"
     exit 1
 }
 
-# Parse arguments
+# Parse CLI
 POSITIONAL_ARGS=()
 while [[ "$1" != "" ]]; do
     case $1 in
@@ -43,7 +73,7 @@ while [[ "$1" != "" ]]; do
             fi
             SESSIONS+=("$1")
             ;;
-        -h | --help )
+        -h|--help )
             usage
             ;;
         -* )
@@ -61,7 +91,6 @@ while [[ "$1" != "" ]]; do
     POSITIONAL_ARGS+=("$1")
     shift
 done
-
 SUBJECTS=("${POSITIONAL_ARGS[@]}")
 
 if [ -z "$BASE_DIR" ]; then
@@ -79,9 +108,6 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/run_synthstrip_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
 
 {
-    # NOTE: We no longer print the heading here to avoid duplication.
-    # "=== Running SynthStrip skull stripping ===" is printed by fmri_preprocessing.sh
-
     echo "Base directory: $BASE_DIR" >> "$LOG_FILE"
     echo "Reorient: $REORIENT" >> "$LOG_FILE"
     if [ ${#SESSIONS[@]} -gt 0 ]; then
@@ -103,11 +129,10 @@ LOG_FILE="${LOG_DIR}/run_synthstrip_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
             fi
         done
     else
+        # If no subjects specified, auto-detect
         for prefix in "${SUBJECT_PREFIXES[@]}"; do
             for subj_dir in "$BASE_DIR"/${prefix}-*; do
-                if [ -d "$subj_dir" ]; then
-                    SUBJECT_DIRS+=("$subj_dir")
-                fi
+                [ -d "$subj_dir" ] && SUBJECT_DIRS+=("$subj_dir")
             done
         done
         IFS=$'\n' SUBJECT_DIRS=($(printf "%s\n" "${SUBJECT_DIRS[@]}" | sort -uV))
@@ -126,6 +151,7 @@ LOG_FILE="${LOG_DIR}/run_synthstrip_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
 
         SESSION_DIRS=()
         if [ ${#SESSIONS[@]} -gt 0 ]; then
+            # If specific sessions were requested
             for ses in "${SESSIONS[@]}"; do
                 SES_DIR="$SUBJ_DIR/$ses"
                 if [ -d "$SES_DIR" ]; then
@@ -135,10 +161,9 @@ LOG_FILE="${LOG_DIR}/run_synthstrip_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
                 fi
             done
         else
+            # Otherwise auto-detect all ses-*
             for ses_dir in "$SUBJ_DIR"/ses-*; do
-                if [ -d "$ses_dir" ]; then
-                    SESSION_DIRS+=("$ses_dir")
-                fi
+                [ -d "$ses_dir" ] && SESSION_DIRS+=("$ses_dir")
             done
             IFS=$'\n' SESSION_DIRS=($(printf "%s\n" "${SESSION_DIRS[@]}" | sort -V))
         fi
@@ -161,13 +186,14 @@ LOG_FILE="${LOG_DIR}/run_synthstrip_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
                 fi
 
                 echo "T1w Image:  $T1W_FILE" | tee -a "$LOG_FILE"
-                
+
                 STEP=1
+                # Reorient if requested
                 if [ "$REORIENT" == "yes" ]; then
                     echo ""
                     echo "[Step $STEP] Applying fslreorient2std:" | tee -a "$LOG_FILE"
                     echo "  - Input: $T1W_FILE" | tee -a "$LOG_FILE"
-                    REORIENTED_T1W_FILE="${ANAT_DIR}/${SUBJ_ID}_${SES_ID}_T1w_reoriented.nii.gz"
+                    REORIENTED_T1W_FILE="${ANAT_DIR}/${SUBJ_ID}_${SES_ID}_desc-reoriented_T1w.nii.gz"
                     echo "  - Output (Reoriented): $REORIENTED_T1W_FILE" | tee -a "$LOG_FILE"
                     fslreorient2std "$T1W_FILE" "$REORIENTED_T1W_FILE"
                     if [ $? -ne 0 ]; then
@@ -176,19 +202,19 @@ LOG_FILE="${LOG_DIR}/run_synthstrip_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
                     fi
                     T1W_FILE="$REORIENTED_T1W_FILE"
                     STEP=$((STEP+1))
-   
                 fi
-                
-		echo ""
+
+                echo ""
                 echo "[Step $STEP] Running SynthStrip:" | tee -a "$LOG_FILE"
                 echo "  - Input: $T1W_FILE" | tee -a "$LOG_FILE"
-                
+
                 DERIV_ANAT_DIR="$BASE_DIR/derivatives/freesurfer/$SUBJ_ID/$SES_ID/anat"
                 mkdir -p "$DERIV_ANAT_DIR"
+
                 OUTPUT_FILE="$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_desc-synthstrip_T1w_brain.nii.gz"
-                
                 echo "  - Command: mri_synthstrip --i \"$T1W_FILE\" --o \"$OUTPUT_FILE\"" | tee -a "$LOG_FILE"
-                echo ""  # New line before SynthStrip output
+                echo ""
+
                 if [ -f "$OUTPUT_FILE" ]; then
                     echo "Skull-stripped T1w image already exists: $OUTPUT_FILE" | tee -a "$LOG_FILE"
                     echo ""

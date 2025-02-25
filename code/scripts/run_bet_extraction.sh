@@ -1,6 +1,38 @@
 #!/bin/bash
-
-# BET Skull Stripping Script (run_bet_extraction.sh)
+#
+###############################################################################
+# run_bet_extraction.sh
+#
+# Purpose:
+#   Applies FSL BET (Brain Extraction Tool) to T1w images, optionally reorienting
+#   them with fslreorient2std first. Outputs go to `derivatives/fsl/`.
+#
+# Usage:
+#   run_bet_extraction.sh --base-dir <dir> [options] [SUBJECTS...]
+#
+# Options:
+#   --base-dir <dir>     Base directory of the project (required)
+#   --reorient           Apply fslreorient2std to T1w images
+#   --bet-option <flag>  BET option flag (e.g., -R, -S, -B, etc.)
+#   --frac <value>       Fractional intensity threshold (default: 0.5)
+#   --session <ses>      Session(s) to process (e.g., ses-01)
+#   -h, --help           Show usage info and exit
+#
+# Usage Examples:
+#   1) run_bet_extraction.sh --base-dir /myproj --reorient sub-01
+#   2) run_bet_extraction.sh --base-dir /myproj --bet-option -R --frac 0.3
+#   3) run_bet_extraction.sh --base-dir /myproj --session ses-01 ses-02
+#
+# Requirements:
+#   - FSL's `bet`
+#   - T1w files named <sub>_<ses>_T1w.nii.gz in anat/
+#
+# Notes:
+#   - If no SUBJECTS are specified, it scans for directories with known prefixes
+#     (sub, subj, participant, etc.).
+#   - Creates log in <base-dir>/code/logs. Outputs to <base-dir>/derivatives/fsl.
+#
+###############################################################################
 
 # Default values
 BASE_DIR=""
@@ -12,15 +44,16 @@ SUBJECTS=()
 SUBJECT_PREFIXES=("sub" "subj" "participant" "P" "pilot" "pilsub")
 
 usage() {
-    echo "Usage: $0 --base-dir BASE_DIR [options] [SUBJECTS...]"
+    echo "Usage: $0 --base-dir <BASE_DIR> [options] [SUBJECTS...]"
     echo ""
     echo "Options:"
-    echo "  --base-dir BASE_DIR       Base directory of the project (required)"
-    echo "  --reorient                Apply fslreorient2std to T1w images"
-    echo "  --bet-option BET_OPTION   BET option flag (e.g., -R, -S, etc.)"
-    echo "  --frac FRAC_INTENSITY     Fractional intensity threshold (default: 0.5)"
-    echo "  --session SESSION         Session(s) to process (e.g., --session ses-01)"
-    echo "  SUBJECTS                  Subjects (e.g., sub-01 sub-02)"
+    echo "  --base-dir <dir>     Base directory of the project (required)"
+    echo "  --reorient           Apply fslreorient2std to T1w images"
+    echo "  --bet-option <flag>  BET option (e.g. -R, -S, etc.)"
+    echo "  --frac <value>       Fractional intensity threshold (default: 0.5)"
+    echo "  --session <name>     Session(s), e.g., --session ses-01"
+    echo "  SUBJECTS             e.g., sub-01 sub-02"
+    echo "  -h, --help           Show this help message"
     exit 1
 }
 
@@ -54,7 +87,7 @@ while [[ "$1" != "" ]]; do
             fi
             SESSIONS+=("$1")
             ;;
-        -h | --help )
+        -h|--help )
             usage
             ;;
         -* )
@@ -72,7 +105,6 @@ while [[ "$1" != "" ]]; do
     POSITIONAL_ARGS+=("$1")
     shift
 done
-
 SUBJECTS=("${POSITIONAL_ARGS[@]}")
 
 if [ -z "$BASE_DIR" ]; then
@@ -90,23 +122,21 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
 
 {
-    # NOTE: We do not print "=== Running BET skull stripping ===" here to avoid duplication.
-    # It is printed by fmri_preprocessing.sh.
-
-    echo "Base directory: $BASE_DIR" >> $LOG_FILE
-    echo "Reorient: $REORIENT" >> $LOG_FILE
-    echo "BET option: $BET_OPTION" >> $LOG_FILE
-    echo "Fractional intensity threshold: $FRAC_INTENSITY" >> $LOG_FILE
+    echo "Base directory: $BASE_DIR" >> "$LOG_FILE"
+    echo "Reorient: $REORIENT" >> "$LOG_FILE"
+    echo "BET option: $BET_OPTION" >> "$LOG_FILE"
+    echo "Fractional intensity threshold: $FRAC_INTENSITY" >> "$LOG_FILE"
     if [ ${#SESSIONS[@]} -gt 0 ]; then
-        echo "Sessions: ${SESSIONS[@]}" >> $LOG_FILE
+        echo "Sessions: ${SESSIONS[@]}" >> "$LOG_FILE"
     fi
     if [ ${#SUBJECTS[@]} -gt 0 ]; then
-        echo "Subjects: ${SUBJECTS[@]}" >> $LOG_FILE
+        echo "Subjects: ${SUBJECTS[@]}" >> "$LOG_FILE"
     fi
-    echo "Logging to: $LOG_FILE" >> $LOG_FILE
+    echo "Logging to: $LOG_FILE" >> "$LOG_FILE"
 
     SUBJECT_DIRS=()
     if [ ${#SUBJECTS[@]} -gt 0 ]; then
+        # Use the specified subjects
         for subj in "${SUBJECTS[@]}"; do
             SUBJ_DIR="$BASE_DIR/$subj"
             if [ -d "$SUBJ_DIR" ]; then
@@ -116,11 +146,10 @@ LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
             fi
         done
     else
+        # Auto-detect subject directories with known prefixes
         for prefix in "${SUBJECT_PREFIXES[@]}"; do
             for subj_dir in "$BASE_DIR"/${prefix}-*; do
-                if [ -d "$subj_dir" ]; then
-                    SUBJECT_DIRS+=("$subj_dir")
-                fi
+                [ -d "$subj_dir" ] && SUBJECT_DIRS+=("$subj_dir")
             done
         done
         IFS=$'\n' SUBJECT_DIRS=($(printf "%s\n" "${SUBJECT_DIRS[@]}" | sort -uV))
@@ -139,19 +168,16 @@ LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
 
         SESSION_DIRS=()
         if [ ${#SESSIONS[@]} -gt 0 ]; then
+            # If specific sessions were requested
             for ses in "${SESSIONS[@]}"; do
                 SES_DIR="$SUBJ_DIR/$ses"
-                if [ -d "$SES_DIR" ]; then
-                    SESSION_DIRS+=("$SES_DIR")
-                else
-                    echo -e "Warning: Session directory not found:\n  - $SES_DIR" | tee -a "$LOG_FILE"
-                fi
+                [ -d "$SES_DIR" ] && SESSION_DIRS+=("$SES_DIR") || \
+                  echo -e "Warning: Session directory not found:\n  - $SES_DIR" | tee -a "$LOG_FILE"
             done
         else
+            # Otherwise find all ses-* directories
             for ses_dir in "$SUBJ_DIR"/ses-*; do
-                if [ -d "$ses_dir" ]; then
-                    SESSION_DIRS+=("$ses_dir")
-                fi
+                [ -d "$ses_dir" ] && SESSION_DIRS+=("$ses_dir")
             done
             IFS=$'\n' SESSION_DIRS=($(printf "%s\n" "${SESSION_DIRS[@]}" | sort -V))
         fi
@@ -176,11 +202,13 @@ LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
                 echo "T1w Image:  $T1W_FILE" | tee -a "$LOG_FILE"
 
                 STEP=1
+                # Reorient step
                 if [ "$REORIENT" == "yes" ]; then
                     echo ""
                     echo "[Step $STEP] Applying fslreorient2std:" | tee -a "$LOG_FILE"
                     echo "  - Input: $T1W_FILE" | tee -a "$LOG_FILE"
-                    REORIENTED_T1W_FILE="${ANAT_DIR}/${SUBJ_ID}_${SES_ID}_T1w_reoriented.nii.gz"
+                    # Use 'desc-reoriented'
+                    REORIENTED_T1W_FILE="${ANAT_DIR}/${SUBJ_ID}_${SES_ID}_desc-reoriented_T1w.nii.gz"
                     echo "  - Output (Reoriented): $REORIENTED_T1W_FILE" | tee -a "$LOG_FILE"
                     fslreorient2std "$T1W_FILE" "$REORIENTED_T1W_FILE"
                     if [ $? -ne 0 ]; then
@@ -198,10 +226,12 @@ LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
                 DERIV_ANAT_DIR="$BASE_DIR/derivatives/fsl/$SUBJ_ID/$SES_ID/anat"
                 mkdir -p "$DERIV_ANAT_DIR"
 
+                # Copy the T1w (possibly reoriented) to derivatives
                 cp "$T1W_FILE" "$DERIV_ANAT_DIR/"
 
                 BET_SUFFIX=""
                 if [ -n "$BET_OPTION" ]; then
+                    # e.g., -R => BET_SUFFIX="R"
                     BET_SUFFIX="${BET_OPTION:1}"
                 fi
                 FRAC_INT_SUFFIX="f$(echo $FRAC_INTENSITY | sed 's/\.//')"
@@ -222,9 +252,10 @@ LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
                     STEP=$((STEP+1))
                     echo "" | tee -a "$LOG_FILE"
                     echo "[Step $STEP] Cleaning Up Temporary Files:" | tee -a "$LOG_FILE"
+
                     if [ "$REORIENT" == "yes" ]; then
-                        echo "  - Removed: $DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_T1w_reoriented.nii.gz" | tee -a "$LOG_FILE"
-                        rm "$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_T1w_reoriented.nii.gz"
+                        echo "  - Removed: $DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_desc-reoriented_T1w.nii.gz" | tee -a "$LOG_FILE"
+                        rm "$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_desc-reoriented_T1w.nii.gz"
                     else
                         echo "  - Removed: $DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_T1w.nii.gz" | tee -a "$LOG_FILE"
                         rm "$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_T1w.nii.gz"

@@ -1,38 +1,45 @@
 #!/bin/bash
-
+#
+###############################################################################
 # fmri_preprocessing.sh
 #
-# Description:
-# This script orchestrates fMRI preprocessing steps including:
+# Purpose:
+#   Orchestrates fMRI preprocessing steps including:
 #   - Skull stripping (BET or SynthStrip)
 #   - Field map correction (topup)
 #   - Conversion of events from TSV to TXT for FEAT (task-based only)
 #   - Slice timing extraction from BOLD JSON files
 #
-# It leverages modular helper scripts:
-#   - run_bet_extraction.sh
-#   - run_synthstrip_extraction.sh
-#   - run_fieldmap_correction.sh
-#   - create_event_files.sh
-#   - extract_slice_timing.sh
+# Usage:
+#   1. Place this script in `code/scripts` of BIDS project.
+#   2. Run: `./fmri_preprocessing.sh`
+#   3. Follow the interactive prompts.
+#
+# Options:
+#   (No direct CLI options; fully interactive.)
+#
+# Usage Examples:
+#   ./fmri_preprocessing.sh
+#        Prompts for the base directory, chooses whether to do skull-stripping,
+#        fieldmap correction, create event files, and slice timing extraction.
 #
 # Requirements:
-#   - Homebrew for managing packages
-#   - FSL (installed at /usr/local/fsl)
+#   - Homebrew (for managing packages)
+#   - FSL (expected at /usr/local/fsl or on your PATH)
 #   - FreeSurfer (if using SynthStrip)
-#   - jq for JSON parsing (brew install jq)
+#   - `jq` for JSON parsing (`brew install jq`)
 #
-# Usage:
-#   1. Place this script in `code/scripts` of your BIDS project.
-#   2. Run: ./fmri_preprocessing.sh
-#   3. Follow interactive prompts.
-#
-# Outputs:
+# Notes:
+#   - Uses helper scripts:
+#       run_bet_extraction.sh,
+#       run_synthstrip_extraction.sh,
+#       run_fieldmap_correction.sh,
+#       create_event_files.sh,
+#       extract_slice_timing.sh.
 #   - Logs in `code/logs`.
-#   - Skull-stripped images in `derivatives/fsl` or `derivatives/freesurfer`.
-#   - Field map corrected data in `derivatives/fsl/topup`.
-#   - Event files in `derivatives/custom_events`.
-#   - Slice timing files in `derivatives/slice_timing`.
+#   - Outputs go in `derivatives/fsl` or `derivatives/freesurfer`, plus other subfolders.
+#
+###############################################################################
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 BASE_DIR_DEFAULT="$(dirname "$(dirname "$SCRIPT_DIR")")"
@@ -55,6 +62,7 @@ LOG_DIR="${BASE_DIR}/code/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/task_fmri_preprocessing_$(date '+%Y-%m-%d_%H-%M-%S').log"
 
+# Capture all terminal output into the log file
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "Starting preprocessing pipeline at $(date)" >> "$LOG_FILE"
@@ -115,13 +123,13 @@ if [ "$APPLY_SKULL_STRIP" == "yes" ]; then
         while true; do
             read -p "Enter your choice: " BET_OPTION_CHOICE
             case $BET_OPTION_CHOICE in
-                1 ) BET_OPTION=""; BET_OPTION_DESC="Standard"; break;;
-                2 ) BET_OPTION="-R"; BET_OPTION_DESC="Robust center"; break;;
-                3 ) BET_OPTION="-S"; BET_OPTION_DESC="Eye cleanup"; break;;
-                4 ) BET_OPTION="-B"; BET_OPTION_DESC="Bias/neck cleanup"; break;;
-                5 ) BET_OPTION="-Z"; BET_OPTION_DESC="Small FOV fix"; break;;
-                6 ) BET_OPTION="-F"; BET_OPTION_DESC="4D fMRI"; break;;
-                7 ) BET_OPTION="-A"; BET_OPTION_DESC="bet2+betsurf"; break;;
+                1 ) BET_OPTION=""; break;;
+                2 ) BET_OPTION="-R"; break;;
+                3 ) BET_OPTION="-S"; break;;
+                4 ) BET_OPTION="-B"; break;;
+                5 ) BET_OPTION="-Z"; break;;
+                6 ) BET_OPTION="-F"; break;;
+                7 ) BET_OPTION="-A"; break;;
                 * ) echo "Invalid choice.";;
             esac
         done
@@ -199,10 +207,10 @@ else
 fi
 
 # Subjects/sessions
-echo -e "\nEnter subject IDs (e.g., sub-01 sub-02) or press Enter for all:"
+echo -e "\nEnter subject IDs (e.g., sub-01 sub-02) or press Enter/Return for all:"
 read -p "> " -a SUBJECTS_ARRAY
 
-echo -e "\nEnter session IDs (e.g., ses-01 ses-02) or press Enter for all:"
+echo -e "\nEnter session IDs (e.g., ses-01 ses-02) or press Enter/Return for all:"
 read -p "> " -a SESSIONS_ARRAY
 
 # Run skull stripping

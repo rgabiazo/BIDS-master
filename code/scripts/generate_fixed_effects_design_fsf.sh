@@ -1,11 +1,75 @@
 #!/bin/bash
+#
+###############################################################################
+# generate_fixed_effects_design_fsf.sh
+#
+# Purpose:
+#   This script automatically generates a modified_fixed-effects_design.fsf file for
+#   second-level fixed effects analysis in FSL. It programmatically inserts the
+#   first-level .feat directories, sets up the appropriate EV and group membership
+#   parameters, and defines thresholding values (Z and Cluster P).
+#
+# Usage:
+#   generate_fixed_effects_design_fsf.sh output_path cope_count z_threshold cluster_p_threshold feat_dirs...
+#
+# Usage Examples:
+#   1) ./generate_fixed_effects_design_fsf.sh \
+#        /path/to/second_level_output/sub-01_ses-01_fixed_effects \
+#        4 2.3 0.05 \
+#        /path/to/sub-01_ses-01_run-01.feat \
+#        /path/to/sub-01_ses-01_run-02.feat \
+#        /path/to/sub-01_ses-01_run-03.feat \
+#        /path/to/sub-01_ses-01_run-04.feat
+#
+# Options:
+#   (No additional command-line flags; positional arguments only.)
+#
+# Requirements:
+#   - FSL installed and accessible in your PATH (for final FEAT usage).
+#   - A base fixed-effects design file (e.g., fixed-effects_design.fsf) located
+#     at $BASE_DIR/code/design_files/fixed-effects_design.fsf
+#   - A standard brain template (e.g., MNI152_T1_2mm_brain.nii.gz) at
+#     $BASE_DIR/derivatives/templates
+#   - Bash 3.2+ recommended.
+#
+# Notes:
+#   - The script writes out a modified_fixed-effects_design.fsf to the specified
+#     'output_path' directory. Ensure you have permissions to create files there.
+#   - 'cope_count' is the number of contrasts (copes) in each first-level analysis
+#     being combined.
+#   - The final design.fsf references each first-level .feat directory and sets up
+#     group membership and EVs for a standard fixed-effects model.
+#   - This script does not itself run 'feat'; it only generates the design file.
+#     You can call 'feat' on the generated .fsf afterwards, or it can be run
+#     automatically as part of a higher-level script.
+#
+###############################################################################
 
-# This script generates a design.fsf file for FEAT fixed effects analysis.
-# It takes the output path, cope count, Z threshold, Cluster P threshold, and a list of feat directories as inputs.
+usage() {
+  cat <<EOF
+Usage:
+  $(basename "$0") output_path cope_count z_threshold cluster_p_threshold feat_dirs...
+
+Example:
+  $(basename "$0") /path/to/second_level_output/sub-01_ses-01_fixed_effects \\
+                   4 2.3 0.05 \\
+                   /path/to/sub-01_ses-01_run-01.feat \\
+                   /path/to/sub-01_ses-01_run-02.feat \\
+                   /path/to/sub-01_ses-01_run-03.feat \\
+                   /path/to/sub-01_ses-01_run-04.feat
+
+Description:
+  Generates a second-level fixed-effects FSF file by inserting each first-level .feat
+  directory into the model. The outputs are directed to 'output_path', and the
+  number of contrasts (COPES) is specified by 'cope_count'. Z and Cluster-P thresholds
+  are also configurable.
+
+EOF
+}
 
 # Check if at least 5 arguments are provided
 if [ "$#" -lt 5 ]; then
-    echo "Usage: $0 output_path cope_count z_threshold cluster_p_threshold feat_dirs..."
+    usage
     exit 1
 fi
 
@@ -66,29 +130,28 @@ OUTPUT_DESIGN_FSF="${output_path}/modified_fixed-effects_design.fsf"
 mkdir -p "$(dirname "$OUTPUT_DESIGN_FSF")"
 
 {
-while IFS= read -r line || [ -n "$line" ]; do
-    # Replace placeholders
-    line="${line//@OUTPUT_DIR@/$output_path}"
-    line="${line//@TEMPLATE@/$TEMPLATE}"
-    line="${line//@NPTS@/$N}"
-    line="${line//@COPE_COUNT@/$COPE_COUNT}"
-    line="${line//@Z_THRESHOLD@/$z_threshold}"
-    line="${line//@CLUSTER_P_THRESHOLD@/$cluster_p_threshold}"
-    if echo "$line" | grep -q '^set fmri(multiple) '; then
-        echo "set fmri(multiple) $N"
-    elif echo "$line" | grep -q '^set fmri(ncopeinputs) '; then
-        echo "set fmri(ncopeinputs) $COPE_COUNT"
-    elif [ "$line" = "@FEAT_FILES@" ]; then
-        printf "$FEAT_FILES_CONTENT"
-    elif [ "$line" = "@EVG_VALUES@" ]; then
-        printf "$EVG_VALUES_CONTENT"
-    elif [ "$line" = "@GROUP_MEMBERSHIP@" ]; then
-        printf "$GROUP_MEMBERSHIP_CONTENT"
-    elif [ "$line" = "@COPEINPUTS@" ]; then
-        printf "$COPEINPUT_CONTENT"
-    else
-        echo "$line"
-    fi
-done < "$BASE_DESIGN_FSF"
+  while IFS= read -r line || [ -n "$line" ]; do
+      # Replace placeholders
+      line="${line//@OUTPUT_DIR@/$output_path}"
+      line="${line//@TEMPLATE@/$TEMPLATE}"
+      line="${line//@NPTS@/$N}"
+      line="${line//@COPE_COUNT@/$COPE_COUNT}"
+      line="${line//@Z_THRESHOLD@/$z_threshold}"
+      line="${line//@CLUSTER_P_THRESHOLD@/$cluster_p_threshold}"
+      if echo "$line" | grep -q '^set fmri(multiple) '; then
+          echo "set fmri(multiple) $N"
+      elif echo "$line" | grep -q '^set fmri(ncopeinputs) '; then
+          echo "set fmri(ncopeinputs) $COPE_COUNT"
+      elif [ "$line" = "@FEAT_FILES@" ]; then
+          printf "$FEAT_FILES_CONTENT"
+      elif [ "$line" = "@EVG_VALUES@" ]; then
+          printf "$EVG_VALUES_CONTENT"
+      elif [ "$line" = "@GROUP_MEMBERSHIP@" ]; then
+          printf "$GROUP_MEMBERSHIP_CONTENT"
+      elif [ "$line" = "@COPEINPUTS@" ]; then
+          printf "$COPEINPUT_CONTENT"
+      else
+          echo "$line"
+      fi
+  done < "$BASE_DESIGN_FSF"
 } > "$OUTPUT_DESIGN_FSF"
-

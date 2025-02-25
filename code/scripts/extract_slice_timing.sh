@@ -1,8 +1,35 @@
 #!/bin/bash
-
+#
+###############################################################################
 # extract_slice_timing.sh
 #
-# Extracts slice timing info from BOLD JSON files.
+# Purpose:
+#   Extracts slice timing info from BOLD JSON files using `jq` and writes
+#   them to a simple text file, one slice timing value per line.
+#
+# Usage:
+#   extract_slice_timing.sh --base-dir <dir> [options] [SUBJECTS...]
+#
+# Options:
+#   --base-dir <dir>    Base directory of the project (required)
+#   --session <ses>     One or more sessions to process (e.g., ses-01)
+#   -h, --help          Show usage info and exit
+#
+# Usage Examples:
+#   1) extract_slice_timing.sh --base-dir /myproj sub-01 sub-02
+#   2) extract_slice_timing.sh --base-dir /myproj --session ses-02
+#   3) extract_slice_timing.sh --base-dir /myproj
+#      (auto-detects sub-* or pilot-* directories, processes all sessions).
+#
+# Requirements:
+#   - `jq` for parsing JSON
+#   - BOLD JSON sidecars containing a 'SliceTiming' array
+#
+# Notes:
+#   - Writes the slice timing as one value per line to <base-dir>/derivatives/slice_timing/<sub>/<ses>/func.
+#   - If no SUBJECTS are provided, it scans sub-* and pilot-* directories at the top level.
+#
+###############################################################################
 
 BASE_DIR=""
 SUBJECTS=()
@@ -10,7 +37,7 @@ SESSIONS=()
 SUBJECT_PREFIXES=("sub" "pilot")
 
 usage() {
-    echo "Usage: $0 --base-dir BASE_DIR [--session SESSIONS...] [SUBJECTS...]"
+    echo "Usage: $0 --base-dir <dir> [--session SESSIONS...] [SUBJECTS...]"
     exit 1
 }
 
@@ -66,11 +93,12 @@ LOG_FILE="${LOG_DIR}/${SCRIPT_NAME%.*}_$(date '+%Y-%m-%d_%H-%M-%S').log"
 exec > >(tee -i "$LOG_FILE") 2>&1
 
 if ! command -v jq &> /dev/null; then
-    echo "Error: jq not found."
+    echo "Error: jq not found. Please install jq to proceed."
     exit 1
 fi
 
 if [ ${#SUBJECTS[@]} -eq 0 ]; then
+    # auto-detect sub-* or pilot-*
     SUBJECTS=($(find "$BASE_DIR" -maxdepth 1 -type d -name "sub-*" -exec basename {} \;))
     PILOT_SUBJS=($(find "$BASE_DIR" -maxdepth 1 -type d -name "pilot-*" -exec basename {} \;))
     SUBJECTS+=("${PILOT_SUBJS[@]}")

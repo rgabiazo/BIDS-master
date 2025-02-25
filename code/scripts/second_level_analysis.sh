@@ -1,61 +1,62 @@
 #!/bin/bash
-
 #
+###############################################################################
 # second_level_analysis.sh
 #
-# PURPOSE:
+# Purpose:
 #   This script performs second-level fixed effects analysis using FSL's FEAT tool.
-#   It lets you interactively select first-level analysis directories, subjects, sessions,
+#   Allows for interactively selecting first-level analysis directories, subjects, sessions,
 #   and runs, then generates and runs the required design files for fixed effects.
-
-# USAGE:
+#
+#   After running FEAT for all subject-sessions, it optionally creates a single
+#   dataset_description.json at the top-level second-level directory using
+#   create_dataset_description.sh, with the "Name" = "FSL_FEAT_with_Fixed_Effects".
+#
+# Usage:
 #   1) Run this script (e.g., ./second_level_analysis.sh).
 #   2) Select a first-level analysis directory from the presented options.
 #   3) Review and optionally filter which subject/session/run combinations are included.
 #   4) Optionally specify a custom task name for output directories.
 #   5) Specify (or accept default) thresholding values (Z and Cluster P).
 #   6) Confirm to begin running second-level FEAT analyses.
-
-# SELECTION SYNTAX & EXAMPLES:
+#
+# Usage Examples:
 #   Syntax:
 #     subject[:session[:runs]]   (for INCLUSION)
 #     -subject[:session[:runs]]  (for EXCLUSION)
 #
-#   Available patterns (generic examples):
+#   Patterns (generic examples):
 #     1) 'sub-XX'                  => Include subject sub-XX (all sessions, all runs)
 #     2) '-sub-XX'                 => Exclude subject sub-XX (all sessions, all runs)
 #     3) 'sub-XX:ses-YY'           => Include subject sub-XX, session ses-YY (all runs)
 #     4) '-sub-XX:ses-YY'          => Exclude subject sub-XX in session ses-YY (all runs)
-#     5) 'sub-XX:ses-YY:01,02'     => Include runs 01 and 02 for subject sub-XX, session ses-YY
-#     6) '-sub-XX:ses-YY:01,02'    => Exclude runs 01 and 02 for subject sub-XX, session ses-YY
-#     7) 'ses-YY' / '-ses-YY'      => Include/Exclude session ses-YY for all subjects
-#     8) 'sub-XX sub-ZZ'           => Multiple inclusions in one line
-#     9) '-sub-XX sub-ZZ:ses-YY:02'=> Exclude sub-XX entirely, exclude only run 02 for
-#                                     subject sub-ZZ in session ses-YY.
-
-# OUTPUTS & INTERACTIONS:
+#     5) 'sub-XX:ses-YY:01,02'     => Include runs 01,02 for subject sub-XX, session ses-YY
+#     6) '-sub-XX:ses-YY:01,02'    => Exclude runs 01,02 for subject sub-XX, session ses-YY
+#     ... etc.
+#
+# Requirements:
+#   - FSL (and FEAT) must be installed and available in your PATH.
+#   - Bash (v3.2+).
+#   - The generate_fixed_effects_design_fsf.sh script must be in the expected location.
+#   - The base design file (fixed-effects_design.fsf) must exist.
+#   - create_dataset_description.sh must be somewhere in $SCRIPT_DIR or called path.
+#
+# Notes:
 #   - Creates second-level fixed effects .gfeat directories in derivatives/fsl/level-2.
 #   - Interacts via prompts to include/exclude subjects, sessions, and runs.
 #   - Generates a temporary design file (modified_fixed-effects_design.fsf) for each subject-session
 #     and calls 'feat' to run the fixed-effects analysis.
-
-# REQUIREMENTS:
-#   - FSL (and FEAT) must be installed and available in your PATH.
-#   - Bash (v3.2+ works, as it avoids associative arrays).
-#   - The generate_fixed_effects_design_fsf.sh script must be in the expected location.
-#   - The base design file (fixed-effects_design.fsf) must exist.
-
-# NOTES:
-#   - This script checks for presence of .feat directories and ensures consistent cope counts 
+#   - This script checks for presence of .feat directories and ensures consistent cope counts
 #     across runs to avoid errors in fixed-effects analysis.
-#   - If you want to see extended instructions at any input step, type 'help'.
-#   - Press Enter/Return at a prompt to accept defaults or skip optional steps.
+#   - Then, calls create_dataset_description.sh to create a top-level dataset_description.json
+#     (Name="FSL_FEAT_with_Fixed_Effects") for your second-level results.
+#
+###############################################################################
 
 ###############################################################################
 #                          INITIAL SETUP AND LOGGING
 ###############################################################################
 
-# Determine the directory of this script and set BASE_DIR two levels up.
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 BASE_DIR="$(dirname "$(dirname "$script_dir")")"
 
@@ -94,7 +95,6 @@ fi
 ###############################################################################
 
 # Adds an item to an array only if not already present.
-# Usage: add_unique_item ARRAY_NAME ITEM
 add_unique_item() {
     local arr_name=$1
     local item=$2
@@ -122,21 +122,19 @@ array_contains() {
 }
 
 ###############################################################################
-# 1) PROMPT USER FOR FIRST-LEVEL ANALYSIS DIRECTORY
+# 1) PROMPT FOR FIRST-LEVEL ANALYSIS DIRECTORY
 ###############################################################################
 
-# Locate potential first-level analysis directories that end with *analysis*.
 ANALYSIS_DIRS=($(find "$ANALYSIS_BASE_DIR" -maxdepth 1 -type d -name "*analysis*"))
 if [ ${#ANALYSIS_DIRS[@]} -eq 0 ]; then
     echo "No analysis directories found in $ANALYSIS_BASE_DIR."
     exit 1
 fi
 
-# Sort the list of analysis directories for a consistent user prompt order.
 ANALYSIS_DIRS=($(printf "%s\n" "${ANALYSIS_DIRS[@]}" | sort))
 
 echo -e "\n=== First-Level Analysis Directory Selection ==="
-echo "Please select a first-level analysis directory for second-level fixed effects processing from the options below:"
+echo "Please select a first-level analysis directory for second-level fixed effects processing:"
 echo
 i=1
 for dir in "${ANALYSIS_DIRS[@]}"; do
@@ -145,7 +143,6 @@ for dir in "${ANALYSIS_DIRS[@]}"; do
 done
 echo
 
-# Prompt user to select one of these directories by index.
 valid_choice=false
 while [ "$valid_choice" = false ]; do
     echo -n "Please enter your choice: "
@@ -170,17 +167,15 @@ echo "You have selected the following analysis directory for fixed effects:"
 echo "$ANALYSIS_DIR"
 echo
 
-# This is where the second-level outputs will be stored (replicating the structure).
+# This is where the second-level outputs will be stored (replicating structure).
 LEVEL_2_ANALYSIS_DIR="${BASE_DIR}/derivatives/fsl/level-2/$(basename "$ANALYSIS_DIR")"
-
-# BASE_PATH is used to truncate paths when printing.
 BASE_PATH="$ANALYSIS_DIR"
 
 ###############################################################################
 #                      FIND SUBJECT & SESSION DIRECTORIES
 ###############################################################################
+# Below to add "sub-*" explicitly to patterns for typical BIDS labels.
 
-# Look for possible subject directories by name patterns (sub-*, subj-*, etc.).
 SUBJECT_NAME_PATTERNS=("sub-*" "subject-*" "pilot-*" "subj-*" "subjpilot-*")
 
 FIND_SUBJECT_EXPR=()
@@ -194,7 +189,6 @@ for pattern in "${SUBJECT_NAME_PATTERNS[@]}"; do
     fi
 done
 
-# Locate potential subject directories immediately inside the chosen analysis directory.
 subject_dirs=($(find "$ANALYSIS_DIR" -mindepth 1 -maxdepth 1 -type d \( "${FIND_SUBJECT_EXPR[@]}" \)))
 subject_dirs=($(printf "%s\n" "${subject_dirs[@]}" | sort))
 if [ ${#subject_dirs[@]} -eq 0 ]; then
@@ -202,7 +196,6 @@ if [ ${#subject_dirs[@]} -eq 0 ]; then
     exit 1
 fi
 
-# Global arrays to keep track of all discovered subjects, sessions, and valid .feat directories.
 ALL_SUBJECTS=()
 ALL_SESSIONS=()
 SUBJECT_SESSION_LIST=()
@@ -213,10 +206,8 @@ all_valid_feat_dirs=()
 available_subject_sessions=()
 
 ###############################################################################
-#                    COUNT COPE FILES
+#       COUNT COPE FILES
 ###############################################################################
-# This function returns the number of cope*.nii.gz files found in the stats folder
-# of a given FEAT directory. Ensure consistent cope counts.
 count_cope_files() {
     local feat_dir="$1"
     local stats_dir="$feat_dir/stats"
@@ -231,12 +222,8 @@ count_cope_files() {
 }
 
 ###############################################################################
-#                CHECK COMMON COPE COUNT
+#       CHECK COMMON COPE COUNTS
 ###############################################################################
-# Given a list of feat_dirs, determine if they share a common cope count (e.g., 3).
-# If there's a mismatch (like some runs have 3 copes, others 4), exclude
-# those that don't match the most frequent cope count. If there's still a tie, the
-# entire subject-session is excluded from second-level analysis.
 check_common_cope_count() {
     local feat_dirs=("$@")
     local cope_counts=()
@@ -244,7 +231,6 @@ check_common_cope_count() {
     local warning_messages=""
     local total_runs=${#feat_dirs[@]}
 
-    # Collect cope counts from each feat directory
     for feat_dir in "${feat_dirs[@]}"; do
         local c
         c=$(count_cope_files "$feat_dir")
@@ -254,7 +240,6 @@ check_common_cope_count() {
     unique_cope_counts=()
     cope_counts_freq=()
 
-    # Count frequency of each distinct cope count
     for c in "${cope_counts[@]}"; do
         local found=false
         for ((i=0; i<${#unique_cope_counts[@]}; i++)); do
@@ -270,7 +255,6 @@ check_common_cope_count() {
         fi
     done
 
-    # Identify the cope count with highest frequency
     local max_freq=0
     local common_cope_counts=()
     for ((i=0; i<${#unique_cope_counts[@]}; i++)); do
@@ -279,22 +263,17 @@ check_common_cope_count() {
             max_freq=$freq
             common_cope_counts=("${unique_cope_counts[i]}")
         elif [ "$freq" -eq "$max_freq" ]; then
-            # Ties
             common_cope_counts+=("${unique_cope_counts[i]}")
         fi
     done
 
-    # If there's more than one cope count tied for max frequency, exclude everything (tie).
     if [ ${#common_cope_counts[@]} -gt 1 ]; then
-        warning_messages="  - Unequal cope counts found across runs (${unique_cope_counts[*]})."
         echo "UNEQUAL_COPES_TIE"
-        echo -e "$warning_messages"
+        echo "  - Unequal cope counts found across runs: ${unique_cope_counts[*]}."
         return
     fi
 
-    # If there's a single most common cope count, keep directories that match it, exclude others.
     local common_cope_count="${common_cope_counts[0]}"
-
     if [ "$max_freq" -gt $((total_runs / 2)) ]; then
         for idx in "${!feat_dirs[@]}"; do
             if [ "${cope_counts[$idx]}" -eq "$common_cope_count" ]; then
@@ -307,36 +286,28 @@ check_common_cope_count() {
                 fi
             fi
         done
-
         echo "$common_cope_count"
         for dir in "${valid_feat_dirs[@]}"; do
             echo "$dir"
         done
-
         if [ -n "$warning_messages" ]; then
             echo "WARNINGS_START"
             echo -e "$warning_messages"
         fi
     else
-        warning_messages="  - Unequal cope counts found across runs (${unique_cope_counts[*]}). Excluding this subject-session."
         echo "UNEQUAL_COPES"
-        echo -e "$warning_messages"
+        echo "  - Unequal cope counts across runs: ${unique_cope_counts[*]}. Excluding subject-session."
     fi
 }
 
 ###############################################################################
-#       CAPTURE FIRST-LEVEL FEAT DIRECTORY LISTING IN A VARIABLE
+#       GATHER VALID FIRST-LEVEL FEAT DIRS
 ###############################################################################
-
 LISTING_OUTPUT=""
+LISTING_OUTPUT+="=== Listing First-Level Feat Directories ===\n\n"
 
-LISTING_OUTPUT+="=== Listing First-Level Feat Directories ===\n"
-LISTING_OUTPUT+="The following feat directories will be used as inputs for the second-level fixed effects analysis:\n\n"
-
-# Patterns that define potential session directories (e.g., ses-01, session-01, etc.).
 SESSION_NAME_PATTERNS=("ses-*" "session-*" "ses_*" "session_*" "ses*" "session*" "baseline" "endpoint" "ses-001" "ses-002")
 
-# Loop over each subject directory to find session directories, then .feat directories within func/.
 for subject_dir in "${subject_dirs[@]}"; do
     subject=$(basename "$subject_dir")
     add_unique_item ALL_SUBJECTS "$subject"
@@ -374,7 +345,6 @@ for subject_dir in "${subject_dirs[@]}"; do
             continue
         fi
 
-        # Check cope counts to ensure consistency.
         check_result=()
         while IFS= read -r line; do
             check_result+=("$line")
@@ -387,7 +357,6 @@ for subject_dir in "${subject_dirs[@]}"; do
         unequal_copes=false
         unequal_copes_tie=false
 
-        # Process the output of check_common_cope_count, capturing warnings.
         for line in "${check_result[@]}"; do
             if [ "$parsing_warnings" = false ]; then
                 case "$line" in
@@ -403,8 +372,6 @@ for subject_dir in "${subject_dirs[@]}"; do
                         parsing_warnings=true
                         ;;
                     *)
-                        # Set cope count if not set.
-                        # Otherwise, treat the line as a valid feat dir.
                         if [ -z "$common_cope_count" ]; then
                             common_cope_count="$line"
                         else
@@ -433,12 +400,10 @@ for subject_dir in "${subject_dirs[@]}"; do
         if [ ${#valid_feat_dirs[@]} -gt 0 ]; then
             LISTING_OUTPUT+="Valid Feat Directories:\n"
             for feat_dir in "${valid_feat_dirs[@]}"; do
-                # Trim the base path so it's easier to read for the user.
                 trimmed="${feat_dir#$BASE_PATH/}"
                 LISTING_OUTPUT+="  • $trimmed\n"
             done
 
-            # Keep track of this subject-session if it passed the cope count check.
             subject_session_keys+=("$key")
             subject_session_cope_counts+=("$common_cope_count")
             all_valid_feat_dirs+=("${valid_feat_dirs[@]}")
@@ -456,28 +421,24 @@ for subject_dir in "${subject_dirs[@]}"; do
     done
 done
 
-# Sort the final list of valid feat directories for a consistent order.
 all_valid_feat_dirs=($(printf "%s\n" "${all_valid_feat_dirs[@]}" | sort))
 
 ###############################################################################
-#                      SIMPLE MEMBERSHIP CHECKS
+# SIMPLE MEMBERSHIP CHECKS
 ###############################################################################
 
-# Check if a given subject name is in the master list of subjects discovered.
 is_valid_subject() {
     local subj="$1"
     array_contains "$subj" "${ALL_SUBJECTS[@]}"
     return $?
 }
 
-# Check if a given session name is in the master list of sessions discovered.
 is_valid_session() {
     local sess="$1"
     array_contains "$sess" "${ALL_SESSIONS[@]}"
     return $?
 }
 
-# Check if the subject-session combination is recognized.
 is_valid_subject_session() {
     local subj="$1"
     local sess="$2"
@@ -486,11 +447,6 @@ is_valid_subject_session() {
     return $?
 }
 
-###############################################################################
-#             CHECK IF A SPECIFIC RUN EXISTS
-###############################################################################
-# Check if "run-XX.feat" exists under the subject/session path in our list of
-# valid feat directories. The leading zeros in run numbers are handled to match naming.
 is_valid_run() {
     local subj="$1"
     local sess="$2"
@@ -503,7 +459,6 @@ is_valid_run() {
             return 0
         fi
     done
-
     return 1
 }
 
@@ -512,7 +467,6 @@ is_valid_run() {
 ###############################################################################
 echo -e "$LISTING_OUTPUT"
 
-# Tracks whether to show short instructions or extended instructions in the prompt.
 PROMPT_MODE="short"
 
 show_selection_prompt() {
@@ -521,46 +475,38 @@ show_selection_prompt() {
         echo -e "$LISTING_OUTPUT"
         echo "=== Subject, Session, and Run Selection ==="
         echo "Specify patterns like:"
-        echo "  subject[:session[:runs]] for inclusion   (e.g.,  sub-01, or sub-01:ses-02:01,02)"
-        echo "  -subject[:session[:runs]] for exclusion  (e.g., -sub-01, or -sub-01:ses-02:01,02)"
-        echo
-        echo "Multiple entries can be on one line. Enter 'help' for these instructions again."
-        echo "If you press Enter/Return with no input, all valid directories are used."
+        echo "  sub-01[:ses-02[:01,02]] for inclusion"
+        echo "  -sub-01[:ses-02[:01,02]] for exclusion"
+        echo "Multiple entries can be on one line. Press Enter for all."
     else
         echo "=== Subject, Session, and Run Selection ==="
         echo "Enter your selections to include or exclude subjects, sessions, or runs."
         echo "Use 'subject[:session[:runs]]' for inclusion, '-subject[:session[:runs]]' for exclusion."
         echo "Enter 'help' for more info, or press Enter/Return for all."
     fi
-
     echo -n "> "
 }
 
 show_selection_prompt
 
-# Store the user's inclusion/exclusion rules in these arrays.
 inclusion_map_keys=()
 inclusion_map_values=()
 exclusion_map_keys=()
 exclusion_map_values=()
 
-# Continuously read user input until they press Enter with no input or valid input is acquired.
 while true; do
     read selection_input
 
-    # If user just presses Enter, no filtering => use all valid directories.
     if [ -z "$selection_input" ]; then
         break
     fi
 
-    # If user types 'help', switch to extended instructions.
     if [ "$selection_input" = "help" ]; then
         PROMPT_MODE="extended"
         show_selection_prompt
         continue
     fi
 
-    # Split the line on spaces to handle multiple entries.
     IFS=' ' read -ra entries <<< "$selection_input"
     invalid_selections=()
     temp_incl_keys=()
@@ -570,13 +516,11 @@ while true; do
 
     for selection in "${entries[@]}"; do
         exclude=false
-        # If the selection starts with '-', treat it as an exclusion.
         if [[ "$selection" == -* ]]; then
             exclude=true
             selection="${selection#-}"
         fi
 
-        # Parse the selection by splitting on ':'
         IFS=':' read -ra parts <<< "$selection"
         sel_subj=""
         sel_sess=""
@@ -584,7 +528,6 @@ while true; do
 
         case ${#parts[@]} in
             1)
-                # Could be just a subject or a session.
                 if is_valid_subject "${parts[0]}"; then
                     sel_subj="${parts[0]}"
                 elif is_valid_session "${parts[0]}"; then
@@ -595,29 +538,27 @@ while true; do
                 fi
                 ;;
             2)
-                # Either subject + session, or session + runs
                 if is_valid_subject "${parts[0]}"; then
                     sel_subj="${parts[0]}"
                     sel_sess="${parts[1]}"
                     if ! is_valid_subject_session "$sel_subj" "$sel_sess"; then
-                        invalid_selections+=("${parts[0]}:${parts[1]}")
+                        invalid_selections+=("$selection")
                         continue
                     fi
                 elif is_valid_session "${parts[0]}"; then
                     sel_sess="${parts[0]}"
                     sel_runs="${parts[1]}"
                 else
-                    invalid_selections+=("${parts[0]}:${parts[1]}")
+                    invalid_selections+=("$selection")
                     continue
                 fi
                 ;;
             3)
-                # Subject + session + runs
                 sel_subj="${parts[0]}"
                 sel_sess="${parts[1]}"
                 sel_runs="${parts[2]}"
                 if ! is_valid_subject_session "$sel_subj" "$sel_sess"; then
-                    invalid_selections+=("${parts[0]}:${parts[1]}")
+                    invalid_selections+=("$selection")
                     continue
                 fi
                 ;;
@@ -627,7 +568,6 @@ while true; do
                 ;;
         esac
 
-        # If runs are specified, ensure they exist in our valid directory list for that sub/ses.
         if [ -n "$sel_runs" ]; then
             IFS=',' read -ra runs_list <<< "$sel_runs"
             for run_val in "${runs_list[@]}"; do
@@ -639,7 +579,6 @@ while true; do
             done
         fi
 
-        # Store inclusion or exclusion rule
         if $exclude; then
             temp_excl_keys+=("${sel_subj}:${sel_sess}")
             temp_excl_vals+=("$sel_runs")
@@ -649,14 +588,12 @@ while true; do
         fi
     done
 
-    # If any parts of the user selection are invalid, prompt again.
     if [ ${#invalid_selections[@]} -gt 0 ]; then
         joined_invalid=$(printf ", %s" "${invalid_selections[@]}")
         joined_invalid="${joined_invalid:2}"
-        echo "The following selections are invalid: $joined_invalid. Please try again."
+        echo "Invalid selections: $joined_invalid. Try again."
         echo -n "> "
     else
-        # Commit the newly parsed rules to the main inclusion/exclusion arrays.
         inclusion_map_keys=("${temp_incl_keys[@]}")
         inclusion_map_values=("${temp_incl_vals[@]}")
         exclusion_map_keys=("${temp_excl_keys[@]}")
@@ -671,13 +608,13 @@ done
 echo
 echo "=== Customize Output Filename (Optional) ==="
 echo "Enter a task name to include in the output directories (e.g., 'taskname')."
-echo "If left blank, output will use the default: 'desc-fixed-effects.gfeat'."
+echo "If left blank, output will use 'desc-fixed-effects.gfeat'."
 echo
 
 valid_task=false
 task_name=""
 
-echo "Enter task name (or press Enter/Return for default):"
+echo "Enter task name (or press Enter for default):"
 while [ "$valid_task" = false ]; do
     echo -n "> "
     read user_input
@@ -688,12 +625,11 @@ while [ "$valid_task" = false ]; do
         break
     fi
 
-    # Accept only alphanumeric, underscores, or dashes
     if [[ "$user_input" =~ ^[A-Za-z0-9_-]+$ ]]; then
         task_name="$user_input"
         valid_task=true
     else
-        echo "Invalid task name. Use letters, numbers, underscores, or dashes. No spaces."
+        echo "Invalid name. Use letters, numbers, underscores, or dashes."
     fi
 done
 
@@ -701,7 +637,7 @@ done
 # 4) PROMPT FOR Z THRESHOLD AND CLUSTER P THRESHOLD
 ###############################################################################
 echo -e "\n=== FEAT Thresholding Options ==="
-echo "Specify Z threshold and Cluster P threshold, or press Enter/Return to use defaults (2.3, 0.05)."
+echo "Specify Z threshold and Cluster P threshold, or press Enter for defaults (2.3, 0.05)."
 
 default_z=2.3
 default_p=0.05
@@ -709,14 +645,12 @@ default_p=0.05
 z_threshold=""
 cluster_p_threshold=""
 
-# Prompt for Z threshold
 valid_z=false
 while [ "$valid_z" = false ]; do
     echo -e "\nEnter Z threshold (default $default_z):"
     echo -n "> "
     read z_threshold_input
 
-    # Validate numeric input (including decimals)
     while [ -n "$z_threshold_input" ] && ! [[ "$z_threshold_input" =~ ^[0-9]*\.?[0-9]+$ ]]; do
         echo "Invalid numeric value. Try again."
         echo -n "> "
@@ -725,16 +659,13 @@ while [ "$valid_z" = false ]; do
 
     if [ -z "$z_threshold_input" ]; then
         z_threshold=$default_z
-        valid_z=true
-        echo "Using Z threshold of $z_threshold"
     else
         z_threshold="$z_threshold_input"
-        valid_z=true
-        echo "Using Z threshold of $z_threshold"
     fi
+    valid_z=true
+    echo "Using Z threshold of $z_threshold"
 done
 
-# Prompt for Cluster P threshold
 valid_p=false
 while [ "$valid_p" = false ]; do
     echo -e "\nEnter Cluster P threshold (default $default_p):"
@@ -749,26 +680,21 @@ while [ "$valid_p" = false ]; do
 
     if [ -z "$cluster_p_threshold_input" ]; then
         cluster_p_threshold=$default_p
-        valid_p=true
-        echo "Using Cluster P threshold of $cluster_p_threshold"
     else
         cluster_p_threshold="$cluster_p_threshold_input"
-        valid_p=true
-        echo "Using Cluster P threshold of $cluster_p_threshold"
     fi
+    valid_p=true
+    echo "Using Cluster P threshold of $cluster_p_threshold"
 done
 
 ###############################################################################
-#         CHECK IF SUBJECT-SESSION SHOULD BE INCLUDED
+#       CHECK INCLUSION/EXCLUSION
 ###############################################################################
-# Return 1 (exclude) if user typed a broad exclusion (e.g., -sub-01 or -sub-01:ses-02),
-# or if the user has inclusion rules that do not match this subject-session.
-# Return 0 (include) otherwise.
 should_include_subject_session() {
     local subject="$1"
     local session="$2"
 
-    # Check if there's an exclusion rule for this subject or session with no runs specified.
+    # Check exclusions
     for idx in "${!exclusion_map_keys[@]}"; do
         local excl_key="${exclusion_map_keys[$idx]}"
         local excl_runs="${exclusion_map_values[$idx]}"
@@ -777,21 +703,27 @@ should_include_subject_session() {
         local excl_subj="${eparts[0]}"
         local excl_sess="${eparts[1]}"
 
-        if [ -n "$excl_subj" ] && [ "$excl_subj" != "$subject" ]; then
-            continue
-        fi
-        if [ -n "$excl_sess" ] && [ "$excl_sess" != "$session" ]; then
-            continue
+        # If matches subject or session with no runs => exclude entire session
+        if [ -n "$excl_subj" ] && [ "$excl_subj" = "$subject" ]; then
+            if [ -z "$excl_sess" ] || [ "$excl_sess" = "$session" ]; then
+                if [ -z "$excl_runs" ]; then
+                    return 1
+                else
+                    return 0
+                fi
+            fi
         fi
 
-        # If runs are specified, only exclude those runs, not the entire session.
-        if [ -n "$excl_runs" ]; then
-            return 0  # Means "don't exclude the entire session"
+        if [ -z "$excl_subj" ] && [ -n "$excl_sess" ] && [ "$excl_sess" = "$session" ]; then
+            if [ -z "$excl_runs" ]; then
+                return 1
+            else
+                return 0
+            fi
         fi
-        return 1      # Exclude entire subject-session
     done
 
-    # If user gave inclusion rules but this sub-ses doesn't appear among them, exclude it.
+    # If inclusion rules, then it must match at least one
     if [ ${#inclusion_map_keys[@]} -gt 0 ]; then
         local found_inclusion=false
         for idx in "${!inclusion_map_keys[@]}"; do
@@ -821,24 +753,25 @@ should_include_subject_session() {
 }
 
 ###############################################################################
-#      DEFINE PATH TO generate_fixed_effects_design_fsf.sh & CHECK IT
+#  DEFINE PATHS, SCRIPTS
 ###############################################################################
 GENERATE_DESIGN_SCRIPT="$BASE_DIR/code/scripts/generate_fixed_effects_design_fsf.sh"
 if [ ! -f "$GENERATE_DESIGN_SCRIPT" ]; then
-    echo "Error: generate_fixed_effects_design_fsf.sh script not found at $GENERATE_DESIGN_SCRIPT"
+    echo "Error: generate_fixed_effects_design_fsf.sh not found at $GENERATE_DESIGN_SCRIPT"
     exit 1
 fi
 
+# Optionally, the create_dataset_description.sh script must be present:
+CREATE_DS_DESC_SCRIPT="$BASE_DIR/code/scripts/create_dataset_description.sh"
+
 ###############################################################################
-#   CONFIRM SELECTIONS, GENERATE DESIGN FILES, PREPARE FOR FIXED-EFFECTS
+# CONFIRM SELECTIONS, GENERATE DESIGN FILES, PREPARE FOR FIXED-EFFECTS
 ###############################################################################
 echo
 echo "=== Confirm Your Selections for Fixed Effects Analysis ==="
 
 generated_design_files=()
 
-# Loop through each subject-session to see if it should be included, 
-# gather their .feat directories, and generate the design files if needed.
 for subject_dir in "${subject_dirs[@]}"; do
     subject=$(basename "$subject_dir")
 
@@ -858,18 +791,15 @@ for subject_dir in "${subject_dirs[@]}"; do
     for session_dir in "${session_dirs[@]}"; do
         session=$(basename "$session_dir")
 
-        # If the user included/excluded this subject-session, decide if to skip it.
         if ! should_include_subject_session "$subject" "$session"; then
             echo
             echo "Subject: $subject | Session: $session"
-            echo "----------------------------------------"
-            echo "  - Excluded based on your selections."
+            echo "  - Excluded based on selections."
             continue
         fi
 
         sel_key="$subject:$session"
         specific_runs=""
-        # Check if there's a subject-session inclusion for specific runs
         for idx in "${!inclusion_map_keys[@]}"; do
             if [ "${inclusion_map_keys[$idx]}" = "$sel_key" ]; then
                 specific_runs="${inclusion_map_values[$idx]}"
@@ -878,7 +808,6 @@ for subject_dir in "${subject_dirs[@]}"; do
         done
 
         exclude_runs=""
-        # Check if there's a subject-session exclusion for specific runs
         for idx in "${!exclusion_map_keys[@]}"; do
             if [ "${exclusion_map_keys[$idx]}" = "$sel_key" ]; then
                 exclude_runs="${exclusion_map_values[$idx]}"
@@ -890,7 +819,6 @@ for subject_dir in "${subject_dirs[@]}"; do
         echo "Subject: $subject | Session: $session"
         echo "----------------------------------------"
 
-        # Gather valid .feat directories for this subject-session from our earlier checks.
         feat_dirs=()
         for d in "${all_valid_feat_dirs[@]}"; do
             if [[ "$d" == *"/$subject/$session/"* ]]; then
@@ -898,13 +826,11 @@ for subject_dir in "${subject_dirs[@]}"; do
             fi
         done
 
-        # If the user explicitly included runs (e.g., sub-01:ses-02:01,02), keep only those.
         if [ -n "$specific_runs" ]; then
             selected_feat_dirs=()
             IFS=',' read -ra sruns <<< "$specific_runs"
             for r in "${sruns[@]}"; do
-                r="${r//run-/}"  # remove "run-" if present
-                r_no0=$(echo "$r" | sed 's/^0*//')  # remove leading zeros
+                r_no0=$(echo "$r" | sed 's/^0*//')
                 rgx=".*run-0*${r_no0}\.feat$"
                 for fdir in "${feat_dirs[@]}"; do
                     [[ "$fdir" =~ $rgx ]] && selected_feat_dirs+=("$fdir")
@@ -913,11 +839,9 @@ for subject_dir in "${subject_dirs[@]}"; do
             feat_dirs=("${selected_feat_dirs[@]}")
         fi
 
-        # If the user excluded runs (e.g., -sub-01:ses-02:01), remove those from feat_dirs.
         if [ -n "$exclude_runs" ]; then
             IFS=',' read -ra eruns <<< "$exclude_runs"
             for r in "${eruns[@]}"; do
-                r="${r//run-/}"
                 r_no0=$(echo "$r" | sed 's/^0*//')
                 rgx=".*run-0*${r_no0}\.feat$"
                 for i2 in "${!feat_dirs[@]}"; do
@@ -934,17 +858,15 @@ for subject_dir in "${subject_dirs[@]}"; do
             echo "  - No matching directories found."
             continue
         elif [ ${#feat_dirs[@]} -lt 2 ]; then
-            echo "  - Not enough runs for fixed effects analysis (need >= 2). Skipping."
+            echo "  - Not enough runs for fixed effects (need >= 2). Skipping."
             continue
         fi
 
         echo "Selected Feat Directories:"
         for f in "${feat_dirs[@]}"; do
-            # Print a short version of the path
             echo "  • ${f#$BASE_PATH/}"
         done
 
-        # Identify how many copes each run has from earlier computations.
         subject_session_key="${subject}:${session}"
         common_cope_count=""
         array_length=${#subject_session_keys[@]}
@@ -958,11 +880,10 @@ for subject_dir in "${subject_dirs[@]}"; do
         done
 
         if [ -z "$common_cope_count" ]; then
-            echo "Common cope count for $subject_session_key not found. Skipping."
+            echo "No common cope count found for $subject_session_key. Skipping."
             continue
         fi
 
-        # Build the output directory name, optionally including the custom task_name.
         if [ -n "$task_name" ]; then
             output_filename="${subject}_${session}_task-${task_name}_desc-fixed-effects"
         else
@@ -972,28 +893,23 @@ for subject_dir in "${subject_dirs[@]}"; do
         output_path="$LEVEL_2_ANALYSIS_DIR/$subject/$session/$output_filename"
 
         echo
-        echo "Output Directory:"
-        echo "- ${output_path}.gfeat"
+        echo "Output Directory: ${output_path}.gfeat"
 
-        # If the .gfeat directory already exists, skip (so does not overwrite).
         if [ -d "${output_path}.gfeat" ]; then
             echo
-            echo "[Notice] Output directory already exists. Skipping fixed effects for this subject-session."
+            echo "[Notice] Output directory already exists. Skipping."
             continue
         fi
 
-        # Call our companion script to generate the design .fsf file for this subject-session.
         "$GENERATE_DESIGN_SCRIPT" "$output_path" "$common_cope_count" "$z_threshold" "$cluster_p_threshold" "${feat_dirs[@]}"
         echo
-        echo "Generated FEAT fixed-effects design file at:"
+        echo "Generated FEAT design file at:"
         echo "- ${output_path}/modified_fixed-effects_design.fsf"
 
-        # Record the path to the newly generated design file to run 'feat' on it below.
         generated_design_files+=("$output_path/modified_fixed-effects_design.fsf")
     done
 done
 
-# If ended up not generating any design files, there's nothing to run.
 if [ ${#generated_design_files[@]} -eq 0 ]; then
     echo
     echo "=== No new analyses to run. All specified outputs already exist or were excluded. ==="
@@ -1002,40 +918,26 @@ if [ ${#generated_design_files[@]} -eq 0 ]; then
 fi
 
 echo
-echo "Press Enter/Return to confirm and proceed with second-level fixed effects analysis, or Ctrl+C to cancel and restart."
+echo "Press Enter/Return to proceed with second-level FEAT, or Ctrl+C to cancel now."
 
-###############################################################################
-#                        CLEANUP TRAP ON CTRL+C
-###############################################################################
-# If the user presses Ctrl+C while the script is waiting or while FEAT runs,
-# remove any design directories were created before exiting to keep the filesystem clean.
 trap_ctrl_c() {
     echo
-    echo "Process interrupted by user. Removing generated design files..."
-
-    # Collect directories to remove
+    echo "Interrupted. Removing any partial design dirs..."
     dirs_to_remove=()
     for design_file in "${generated_design_files[@]}"; do
         design_dir="$(dirname "$design_file")"
-        if [ -d "$design_dir" ]; then
-            dirs_to_remove+=("$design_dir")
-        fi
+        [ -d "$design_dir" ] && dirs_to_remove+=("$design_dir")
     done
-
-    # Remove them all
     for d in "${dirs_to_remove[@]}"; do
-        rm -r "$d"
+        rm -rf "$d"
     done
-
-    # Print a single grouped list
     if [ ${#dirs_to_remove[@]} -gt 0 ]; then
         echo
-        echo "Removed the following temporary design directories:"
+        echo "Removed these design directories:"
         for d in "${dirs_to_remove[@]}"; do
             echo "- ${d#$BASE_PATH/}"
         done
     fi
-
     exit 1
 }
 trap 'trap_ctrl_c' SIGINT
@@ -1049,27 +951,46 @@ trap - SIGINT
 echo
 echo "=== Running Fixed Effects ==="
 
-# Loop through each generated design file and run FEAT, then clean up the design directory.
 for design_file in "${generated_design_files[@]}"; do
     echo
-    echo "--- Processing Design File ---"
-    echo
-    echo "File Path:"
-    echo "- ${design_file#$BASE_PATH/}"
+    echo "--- Processing Design File: ---"
+    echo "  ${design_file#$BASE_PATH/}"
 
     feat "$design_file"
     echo
-    echo "Finished running fixed effects with:"
-    echo "- ${design_file#$BASE_PATH/}"
+    echo "Finished running fixed effects:"
+    echo "  ${design_file#$BASE_PATH/}"
 
-    # Remove the temporary design directory after FEAT completes.
     design_dir="$(dirname "$design_file")"
-    rm -r "$design_dir"
-    echo
-    echo "Removed temporary design directory:"
-    echo "- ${design_dir#$BASE_PATH/}"
+    rm -rf "$design_dir"
+    echo "Removed temporary design directory: ${design_dir#$BASE_PATH/}"
 done
 
+echo "=== All processing complete. Please check $LEVEL_2_ANALYSIS_DIR for outputs. ==="
 echo
-echo "=== All processing is complete. Please check the output directories for results. ==="
-echo
+
+###############################################################################
+#  CREATE/UPDATE DATASET_DESCRIPTION.JSON AT TOP LEVEL
+###############################################################################
+# Place it in $LEVEL_2_ANALYSIS_DIR
+
+# If create_dataset_description.sh is missing, skip:
+if [ ! -f "$CREATE_DS_DESC_SCRIPT" ]; then
+    echo "[Notice] create_dataset_description.sh not found at $CREATE_DS_DESC_SCRIPT." >> $LOGFILE
+    echo "Skipping dataset_description.json creation." >> $LOGFILE
+else
+    # Acquire FSL version
+    FSL_VERSION="Unknown"
+    if [ -n "$FSLDIR" ] && [ -f "$FSLDIR/etc/fslversion" ]; then
+        FSL_VERSION=$(cat "$FSLDIR/etc/fslversion" | cut -d'%' -f1)
+    fi
+
+    # Call create_dataset_description.sh
+    "$CREATE_DS_DESC_SCRIPT" \
+        --analysis-dir "$LEVEL_2_ANALYSIS_DIR" \
+        --ds-name "FSL_FEAT_with_Fixed_Effects" \
+        --dataset-type "derivative" \
+        --description "A second-level FSL pipeline for fixed-effects analysis across multiple first-level runs." \
+        --bids-version "1.10.0" \
+        --generatedby "Name=FSL,Version=$FSL_VERSION,Description=Used for second-level fixed effects."
+fi

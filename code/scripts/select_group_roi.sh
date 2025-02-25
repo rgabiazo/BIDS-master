@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #
+################################################################################
 # select_group_roi.sh
 #
 # Purpose:
@@ -12,28 +13,28 @@
 #       - create_spherical_rois.sh
 #         which actually creates the spherical ROI masks.
 #
-# What this script does:
-#   1. Dynamically finds all 'level-3' subdirectories containing 'desc' and 'group'.
-#   2. Displays them in a more visually spaced list (without reprinting the question every invalid input).
-#   3. Prompts the user to pick a group-analysis directory (by integer).
-#   4. Within that selected directory, finds all *.gfeat directories (sorted numerically).
-#   5. Displays them in a similarly spaced list.
-#   6. Prompts the user to pick which .gfeat they'd like to process (again by integer).
-#   7. Extracts "copeXX" from the chosen .gfeat directory name (e.g., "cope10.gfeat" -> "cope10").
-#   8. Exports environment variables FEAT_DIR, COPE_NAME, and OUTDIR_BASE for the next scripts.
-#   9. Calls generate_cluster_tables.sh, which will in turn prompt for ROI creation.
-#   10. After finishing, prompts the user if they'd like to repeat with a different .gfeat.
+#   Detailed Steps:
+#     1.  Dynamically finds all 'level-3' subdirectories containing 'desc' and 'group'.
+#     2.  Displays them in a more visually spaced list (without reprinting the question every invalid input).
+#     3.  Prompts to pick a group-analysis directory (by integer).
+#     4.  Within that selected directory, finds all *.gfeat directories (sorted numerically).
+#     5.  Displays them in a similarly spaced list.
+#     6.  Prompts to pick which .gfeat to process (again by integer).
+#     7.  Extracts "copeXX" from the chosen .gfeat directory name (e.g., "cope10.gfeat" -> "cope10").
+#     8.  Exports environment variables FEAT_DIR, COPE_NAME, and OUTDIR_BASE for the next scripts.
+#     9.  Calls generate_cluster_tables.sh, which will in turn prompt for ROI creation.
+#     10. After finishing, prompts to repeat with a different .gfeat.
 #
 # Usage:
 #   ./select_group_roi.sh
 #
 # Notes:
-#   • This script expects FSL environment variables to be set (FSLDIR, etc.).
-#   • The script logs its process to a time-stamped log file in code/logs/.
-#   • The user should have read+write permissions to the derivatives/fsl/level-3 folder.
-#   • generate_cluster_tables.sh and create_spherical_rois.sh should live in the same folder.
+#   - This script expects FSL environment variables to be set (FSLDIR, etc.).
+#   - The script logs its process to a time-stamped log file in code/logs/.
+#   - Ensure read+write permissions to the derivatives/fsl/level-3 folder.
+#   - generate_cluster_tables.sh and create_spherical_rois.sh should live in the same folder.
 #
-
+################################################################################
 set -e
 
 ###############################################################################
@@ -220,7 +221,7 @@ fi
 bash "$SCRIPT_TO_RUN"
 
 ###############################################################################
-# Step 4: Prompt user if they want to create additional ROIs (Minimal re-print)
+# Step 4: Prompt to create additional ROIs (Minimal re-print)
 ###############################################################################
 echo ""
 echo "Would you like to select another group & cope for spherical ROI creation? (y/n)"

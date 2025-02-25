@@ -1,30 +1,32 @@
 #!/usr/bin/env bash
-###############################################################################
-# run_featquery.sh
-# -----------------------------------------------------------------------------
-# This script is called by featquery_input.sh, receiving two lists:
-#   1) FEAT directories (any level: .feat or .gfeat)
-#   2) ROI mask files (with 'binarized' in the name)
 #
-# They are passed in as:
+#################################################################################
+# run_featquery.sh
+#
+# Purpose:
+#   A companion script that receives FEAT directories and ROI masks, calls FSL’s
+#   featquery, and parses the resulting "report.txt" to produce CSV output(s).
+#
+# Usage:
 #   run_featquery.sh dir1 dir2 ... :: roi1.nii.gz roi2.nii.gz ...
 #
-# For each ROI mask, we:
-#   a) Parse "copeXX" from the mask's parent folder.
-#   b) If a FEAT directory ends in ".gfeat", we append "/copeXX.feat" so that
-#      featquery knows which sub-.feat to query (typical for level-2).
-#   c) Build a label like "cope10-OccipitalPole_space-MNI152_desc-sphere5_featquery".
-#   d) Skip any FEAT directory that already has the final output (partial re-run).
-#   e) Actually run featquery on only the "missing" directories, move the
-#      resulting subfolders, parse "report.txt" for the mean, and write a CSV
-#      containing "ID,Mean" lines.
+# Options:
+#   - None (positional arguments are the FEAT directories, then "::", then ROI masks).
 #
-# Additionally:
-#   - We do NOT hardcode 'featquery' but locate it with `command -v featquery`.
-#   - We produce a log file in the script's directory, capturing everything.
-#   - Some lines go ONLY to the log file (not shown in the terminal).
-#   - The console sees a shorter summary plus the final command + CSV info.
-###############################################################################
+# Usage Examples:
+#   ./run_featquery.sh sub-02_ses-01.feat sub-03_ses-01.feat :: /path/to/roi.nii.gz
+#
+# Requirements:
+#   - BASH shell
+#   - FSL installed (with featquery in PATH)
+#   - The .feat or .gfeat directories must be valid FSL outputs
+#   - Binarized ROI mask(s) containing "binarized" in the filename
+#
+# Notes:
+#   - This script logs full details to code/logs/run_featquery_<timestamp>.log
+#   - It writes separate CSV files per session in derivatives/fsl/featquery/data/<ses-XX>
+#
+#################################################################################
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 BASE_DIR="$(dirname "$(dirname "$script_dir")")"
@@ -38,11 +40,11 @@ exec > >(tee -a "$LOGFILE") 2>&1
 
 echo
 echo "=== Initializing run_featquery.sh ===" >> $LOGFILE
-echo "Log file: $LOGFILE" >> $LOGFILE >> $LOGFILE
+echo "Log file: $LOGFILE" >> $LOGFILE
 echo >> $LOGFILE
 
 ###############################################################################
-# 1) Locate 'featquery' in the user's PATH
+# 1) Locate 'featquery' in PATH
 ###############################################################################
 FEATQ="$(command -v featquery)"
 if [ -z "$FEATQ" ]; then
@@ -106,12 +108,11 @@ if [ ${#ROI_MASKS[@]} -eq 0 ]; then
 fi
 
 ###############################################################################
-# 5) We'll define a helper function to log certain lines ONLY to the log file.
+# 5) Define a helper function to log certain lines ONLY to the log file.
 ###############################################################################
 function log_only() {
     # This echoes to the log file ONLY (not to the console),
     # because everything currently goes to console & log by default.
-    # We'll temporarily disable tee for these lines by redirecting them.
     echo "$@" >> "$LOGFILE"
 }
 
@@ -124,21 +125,21 @@ mkdir -p "$CSV_DATA_DIR"
 
 for mask_path in "${ROI_MASKS[@]}"; do
 
-    # We'll log these lines ONLY to the log file:
+    # Log these lines ONLY to the log file:
     log_only "Preparing featquery call for ROI mask:"
     log_only "  $mask_path"
     log_only ""
 
-    # (a) Extract 'copeXX'
+    # Extract 'copeXX' or 'copeNNN' from parent folder name
     roi_parent="$(dirname "$mask_path")"
-    cope_name="$(basename "$roi_parent")"
+    cope_name="$(basename "$roi_parent")"  # e.g. 'cope12'
 
-    # (b) ROI name
+    # ROI name (strip .nii/.nii.gz, also remove any trailing "_binarized_mask")
     roi_file="$(basename "$mask_path")"
     roi_noext="${roi_file%.nii*}"
     roi_noext="$(echo "$roi_noext" | sed -E 's/(_binarized_mask)?$//I')"
 
-    # (c) If FEAT dir ends with .gfeat => append "/copeXX.feat"
+    # If FEAT dir ends with .gfeat => append "/copeXX.feat" so featquery knows the sub-cope
     FIXED_FEAT_DIRS=()
     for fdir in "${FEAT_DIRS[@]}"; do
         fdir="${fdir%/}"
@@ -149,8 +150,14 @@ for mask_path in "${ROI_MASKS[@]}"; do
         fi
     done
 
-    label="${cope_name}-${roi_noext}_featquery"
+    # Adjust subfolder name => e.g. "cope12_ROI-LOcinferior_space-MNI152_desc-sphere5mm_featquery"
+    label="${cope_name}_ROI-${roi_noext}_featquery"
 
+    # Store data lines by session in an associative array:
+    #   PERROI_SESSIONS_DATA["ses-01"] -> "ID,Mean\nsub-02,0.234\nsub-03,0.567\n..."
+    declare -A PERROI_SESSIONS_DATA=()
+
+    # Identify which FEAT dirs don't have a final featquery folder
     MISSING_FEAT_DIRS=()
     for fdir in "${FIXED_FEAT_DIRS[@]}"; do
         rel_path="${fdir#$BASE_DIR/}"
@@ -167,19 +174,21 @@ for mask_path in "${ROI_MASKS[@]}"; do
 
     if [ ${#MISSING_FEAT_DIRS[@]} -eq 0 ]; then
         echo "[INFO] All FEAT directories already have outputs for: ${roi_noext}"
-        echo "       => Skipping featquery for this ROI."
+        echo "       => Skipping featquery for this ROI: $label"
         echo
         continue
     fi
 
+    # Remove any old partial subfolder if present
     for fdir in "${MISSING_FEAT_DIRS[@]}"; do
         subfolder="$fdir/$label"
         if [ -d "$subfolder" ]; then
-            log_only "[INFO] Removing old subfolder to ensure a clean re-run: $subfolder"
+            log_only "[INFO] Removing old subfolder: $subfolder"
             rm -rf "$subfolder"
         fi
     done
 
+    # Build featquery command
     num_missing=${#MISSING_FEAT_DIRS[@]}
     CMD=( "$FEATQ" "$num_missing" )
     for missing_dir in "${MISSING_FEAT_DIRS[@]}"; do
@@ -190,17 +199,14 @@ for mask_path in "${ROI_MASKS[@]}"; do
     echo ">>> ${CMD[@]}"
     echo
 
-    # We'll log to the file that we're "calling featquery with X directories" etc.:
     log_only "Calling featquery with $num_missing FEAT directories..."
     log_only "Label: $label"
     log_only ""
 
-    # Run featquery
+    # Run featquery command
     "${CMD[@]}"
 
-    DATA_LINES=()
-    DATA_LINES+=( "ID,Mean" )
-
+    # Parse the results
     for fdir in "${MISSING_FEAT_DIRS[@]}"; do
         source_dir="$fdir/$label"
         if [ ! -d "$source_dir" ]; then
@@ -215,9 +221,7 @@ for mask_path in "${ROI_MASKS[@]}"; do
         base_dirname="$(dirname "$rel_path")"
         final_out_dir="$BASE_DIR/$base_dirname/$label"
 
-        # Log the "moving featquery results" line only to the log:
         log_only "Moving featquery results -> $final_out_dir"
-
         mkdir -p "$(dirname "$final_out_dir")"
         mv "$source_dir" "$final_out_dir"
 
@@ -227,6 +231,7 @@ for mask_path in "${ROI_MASKS[@]}"; do
             continue
         fi
 
+        # Grab the 'Mean' from the first line of report.txt
         mapfile -t lines < "$report_file"
         if [ ${#lines[@]} -gt 0 ]; then
             fields=(${lines[0]})
@@ -235,35 +240,45 @@ for mask_path in "${ROI_MASKS[@]}"; do
             mean_val="NaN"
         fi
 
+        # Extract subject & session from path
         subject="$(echo "$fdir" | sed -nE 's@.*(sub-[^_/]+).*@\1@p')"
-        if [ -z "$subject" ]; then
-            subject="UnknownID"
+        [ -z "$subject" ] && subject="sub-unknown"
+
+        session_name="$(echo "$fdir" | sed -nE 's@.*(ses-[^_/]+).*@\1@p')"
+        [ -z "$session_name" ] && session_name="ses-unknown"
+
+        # Initialize CSV header if needed
+        if [ -z "${PERROI_SESSIONS_DATA["$session_name"]+exists}" ]; then
+            PERROI_SESSIONS_DATA["$session_name"]="ID,Mean"
         fi
 
-        DATA_LINES+=( "$subject,$mean_val" )
+        # Append new line
+        PERROI_SESSIONS_DATA["$session_name"]+=$'\n'"${subject},${mean_val}"
+
     done
 
+    # Make separate CSVs per session
     date_str="$(date +'%Y%m%d_%H%M')"
-    csv_name="${label}_${date_str}.csv"
-    csv_path="$CSV_DATA_DIR/$csv_name"
 
-    if [ ${#DATA_LINES[@]} -gt 1 ]; then
-        mkdir -p "$(dirname "$csv_path")"
-        printf "%s\n" "${DATA_LINES[@]}" > "$csv_path"
+    for s in "${!PERROI_SESSIONS_DATA[@]}"; do
+        session_data_dir="$CSV_DATA_DIR/$s"
+        mkdir -p "$session_data_dir"
+
+        csv_name="${label}_${s}_${date_str}.csv"
+        csv_path="$session_data_dir/$csv_name"
+
+        printf "%s\n" "${PERROI_SESSIONS_DATA["$s"]}" > "$csv_path"
 
         echo "CSV created at:"
         echo "  $csv_path"
-
-        # In the log, let's also note [INFO] Writing CSV to ...
         log_only "[INFO] Writing CSV to: $csv_path"
-    else
-        log_only "[INFO] No new data lines for $label, skipping CSV creation."
-    fi
+        echo
+    done
 
-    echo
 done
 
 echo "Featquery Complete."
 echo "========================================"
 echo "=== Finished run_featquery.sh ===" >> $LOGFILE
+
 

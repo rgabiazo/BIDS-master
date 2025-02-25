@@ -1,14 +1,48 @@
 #!/bin/bash
-
+#
+###############################################################################
 # third_level_analysis.sh
-# Author: Raphael Gabiazon
-# Description:
-# It allows users to select and organize higher-level .gfeat directories
-# for group analysis. The script dynamically finds, validates, and processes the directories,
-# ensuring compatibility with custom Z-thresholds, cluster P-thresholds, user-defined output folder names,
-# and flexible higher-level modeling approaches (OLS, FLAME1, FLAME1+2).
-# Additionally, it allows editing (adding or replacing) multiple subjects and ensures valid input 
-# for naming and thresholds.
+#
+# Purpose:
+#     This script selects and organizes higher-level .gfeat directories for group analysis.
+#     It dynamically finds, validates, and processes the directories, ensuring compatibility
+#     with custom Z-thresholds, cluster P-thresholds, defined output folder names, and flexible
+#     higher-level modeling approaches (OLS, FLAME1, FLAME1+2).
+#
+# Usage:
+#     - Place this script within YourBIDSProject/code/scripts directory.
+#     - Ensure $BASE_DIR is set appropriately two levels up from this script,
+#        so the script can reference:
+#            - derivatives/fsl/level-1
+#            - derivatives/fsl/level-2
+#            - derivatives/fsl/level-3
+#     - From the command line, run:
+#         bash third_level_analysis.sh
+#     - Follow the interactive prompts to:
+#            - Select the second-level analysis directory (for .gfeat inputs),
+#            - Choose session(s) and subject(s),
+#            - Edit or remove subject directories as needed,
+#            - Choose higher-level modeling approach (OLS, FLAME1, or FLAME1+2),
+#            - Set custom Z-threshold and cluster P-threshold,
+#            - Optionally enable robust outlier detection,
+#            - Specify an optional task name and descriptor for the output folder,
+#            - And finally run third-level group analyses in FSL (feat).
+#
+# Requirements:
+#     - FSL must be installed and configured (with the $FSLDIR environment variable set).
+#     - The script expects a BIDS-like data structure under $BASE_DIR.
+#     - Proper permissions to create and modify directories under $BASE_DIR/derivatives/fsl/.
+#     - A template design file for mixed-effects (mixed-effects_design.fsf) is expected at:
+#         $BASE_DIR/code/design_files/mixed-effects_design.fsf
+#
+# Notes:
+#     - The script logs all operations to a timestamped .log file in $BASE_DIR/code/logs/.
+#     - At least 3 runs/directories must be selected to proceed with a valid group analysis.
+#     - If robust outlier detection is enabled, the design file will set the corresponding FEAT parameter.
+#     - The final output directory (e.g., /level-3/desc-group-FLAME1/cope*.gfeat) is created automatically.
+#     - A dataset_description.json can be generated at the end (if create_dataset_description.sh is present).
+#
+###############################################################################
 
 # Set the prompt for the select command
 PS3="Please enter your choice: "
@@ -111,7 +145,7 @@ display_selections() {
 # Display the main menu
 echo -e "\n=== Third Level Analysis  ==="
 
-# Now, we assume INPUT_TYPE="higher"
+# Now, assume INPUT_TYPE="higher"
 
 # Check for higher-level .gfeat directories
 find_higher_level_analysis_dirs "$LEVEL_2_ANALYSIS_BASE_DIR"
@@ -269,10 +303,10 @@ done
 while true; do
     display_selections
 
-    # Convert user input to lowercase
+    # Convert input to lowercase
     lower_input=$(echo "$user_input" | tr '[:upper:]' '[:lower:]')
 
-    # If user just presses Enter, break out and move on
+    # If just presseing Enter, break out and move on
     if [ -z "$user_input" ]; then
         # CLEAR BEFORE FINAL OUTPUT
         clear
@@ -682,7 +716,7 @@ for cope_num in "${common_cope_numbers[@]}"; do
             IFS=':' read -r dir dir_type <<< "$pair"
             directories_list+=("$dir")
             directory_types_list+=("$dir_type")
-        done 
+        done
 
         echo
         echo "--- Subject: $subject | Session: $session ---"
@@ -789,12 +823,8 @@ echo "Press Enter/Return to use the default format."
 
 # **Dynamic** default format logic:
 if [ -n "$task_name" ]; then
-    # If there's a task name, show something like:
-    #   /level-3/task-${task_name}_desc-group-${mixed_label}/cope*.gfeat
     echo "Default format: /level-3/task-${task_name}_desc-group-${mixed_label}/cope*.gfeat"
 else
-    # If no task name, show:
-    #   /level-3/desc-group-${mixed_label}/cope*.gfeat
     echo "Default format: /level-3/desc-group-${mixed_label}/cope*.gfeat"
 fi
 echo
@@ -818,16 +848,12 @@ done
 # Construct the output directory name
 output_subdir=""
 if [ -n "$task_name" ] && [ -n "$custom_desc" ]; then
-    # e.g. task-myTask_desc-postICA_group-FLAME1
     output_subdir="task-${task_name}_desc-${custom_desc}_group-${mixed_label}"
 elif [ -n "$task_name" ] && [ -z "$custom_desc" ]; then
-    # e.g. task-myTask_desc-group-FLAME1
     output_subdir="task-${task_name}_desc-group-${mixed_label}"
 elif [ -z "$task_name" ] && [ -n "$custom_desc" ]; then
-    # e.g. desc-postICA_group-FLAME1
     output_subdir="desc-${custom_desc}_group-${mixed_label}"
 else
-    # e.g. desc-group-FLAME1
     output_subdir="desc-group-${mixed_label}"
 fi
 
@@ -858,23 +884,16 @@ while [ "$valid_z" = false ]; do
     echo -n "> "
     read z_threshold_input
 
-    #
-    # Keep asking again if user typed something invalid
-    #
     while [ -n "$z_threshold_input" ] && ! [[ "$z_threshold_input" =~ ^[0-9]*\.?[0-9]+$ ]]; do
-        # They typed something non-numeric (e.g., "oi", "kpikp"), so show an error and prompt again
         echo "Invalid input. Please enter a numeric value or press Enter/Return to use default value of $default_z."
         echo -n "> "
         read z_threshold_input
     done
 
-    # If user simply pressed Enter, use the default
     if [ -z "$z_threshold_input" ]; then
         z_threshold=$default_z
         valid_z=true
         echo "Using Z threshold of $z_threshold"
-
-    # Otherwise, user typed a valid float (the 'while' above ensures it’s numeric)
     else
         z_threshold="$z_threshold_input"
         valid_z=true
@@ -891,14 +910,12 @@ while [ "$valid_p" = false ]; do
     echo -n "> "
     read cluster_p_input
 
-    # Re-prompt if user typed something invalid
     while [ -n "$cluster_p_input" ] && ! [[ "$cluster_p_input" =~ ^[0-9]*\.?[0-9]+$ ]]; do
         echo "Invalid input. Please enter a numeric value or press Enter/Return to use default value of $default_p."
         echo -n "> "
         read cluster_p_input
     done
 
-    # If user pressed Enter, use the default
     if [ -z "$cluster_p_input" ]; then
         cluster_p_threshold=$default_p
         valid_p=true
@@ -924,7 +941,6 @@ while [ "$valid_robust" = false ]; do
     read robust_choice
     robust_choice=$(echo "$robust_choice" | tr '[:upper:]' '[:lower:]')
     if [ -z "$robust_choice" ]; then
-        # Default to no if blank
         robust_choice="n"
     fi
     if [ "$robust_choice" == "y" ]; then
@@ -992,7 +1008,7 @@ for cope_num in "${common_cope_numbers[@]}"; do
             IFS=':' read -r dir dir_type <<< "$pair"
             directories_list+=("$dir")
             directory_types_list+=("$dir_type")
-        done 
+        done
 
         for dir_idx in "${!directories_list[@]}"; do
             dir="${directories_list[$dir_idx]}"
@@ -1021,7 +1037,7 @@ for cope_num in "${common_cope_numbers[@]}"; do
     export MIXED_YN="$fmri_mixed"
     export ROBUST_YN="$fmri_robust"
 
-    # Use envsubst to replace environmental variables in the template
+    # Use envsubst to replace environmental variables in the design template
     envsubst < "$design_template" > "$temp_design_file"
 
     # Append input lines
@@ -1042,4 +1058,49 @@ for cope_num in "${common_cope_numbers[@]}"; do
     echo -e "\nCompleted FEAT for cope $cope_num."
 done
 
-echo -e "\n=== Third-level analysis completed ===\n."
+echo -e "\n=== Third-level analysis completed ===\n"
+
+###############################################################################
+#  Create a single dataset_description.json at the TOP LEVEL (OUTPUT_DIR)
+###############################################################################
+CREATE_DS_DESC_SCRIPT="$BASE_DIR/code/scripts/create_dataset_description.sh"
+
+# Acquire the FSL version for the JSON
+FSL_VERSION="Unknown"
+if [ -n "$FSLDIR" ] && [ -f "$FSLDIR/etc/fslversion" ]; then
+    FSL_VERSION=$(cat "$FSLDIR/etc/fslversion" | cut -d'%' -f1)
+fi
+
+# Decide a name for the dataset_description.json based on approach
+case "$mixed_label" in
+    "OLS")
+        DS_JSON_NAME="FSL_FEAT_with_Simple_OLS"
+        ;;
+    "FLAME1")
+        DS_JSON_NAME="FSL_FEAT_with_Mixed_Effects_FLAME1"
+        ;;
+    "FLAME1plus2")
+        DS_JSON_NAME="FSL_FEAT_with_Mixed_Effects_FLAME1plus2"
+        ;;
+    *)
+        DS_JSON_NAME="FSL_FEAT_ThirdLevelAnalysis"
+        ;;
+esac
+
+# Build a short description that includes chosen parameters
+JSON_DESCRIPTION="Third-level group analysis in FSL using ${mixed_label}. \
+Z-threshold=${z_threshold}, Cluster P-threshold=${cluster_p_threshold}, \
+Robust outlier detection=$([ "$fmri_robust" == "1" ] && echo 'Enabled' || echo 'Disabled')."
+
+if [ -f "$CREATE_DS_DESC_SCRIPT" ]; then
+    "$CREATE_DS_DESC_SCRIPT" \
+        --analysis-dir "$OUTPUT_DIR" \
+        --ds-name "$DS_JSON_NAME" \
+        --dataset-type "derivative" \
+        --description "$JSON_DESCRIPTION" \
+        --bids-version "1.10.0" \
+        --generatedby "Name=FSL,Version=${FSL_VERSION},Description=Used for third-level group analysis"
+else
+    echo "[Notice] create_dataset_description.sh not found at $CREATE_DS_DESC_SCRIPT" >> $LOGFILE
+    echo "Skipping dataset_description.json creation in $OUTPUT_DIR." >> $LOGFILE
+fi

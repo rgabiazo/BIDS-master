@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# 
+#
+#################################################################################
 # create_spherical_rois.sh
 #
 # Purpose:
 #   Creates a spherical region-of-interest (ROI) around a single voxel in MNI space.
-#   This script is typically called by a higher-level workflow once you know:
-#     • The region name 
-#     • A target MNI coordinate (x,y,z)
-#     • The corresponding voxel coordinate in the reference image
-#     • The radius (in mm) you want for your sphere
+#   This script is typically called by a higher-level workflow after acquiring:
+#     - The region name
+#     - A target MNI coordinate (x,y,z)
+#     - The corresponding voxel coordinate in the reference image
+#     - The radius (in mm) want for sphere
 #
 # Usage:
 #   create_spherical_rois.sh --region "Region" \
@@ -18,26 +19,38 @@
 #                            --radius "5mm" \
 #                            --outdir "/path/to/output"
 #
+# Usage Examples:
+#   create_spherical_rois.sh --region "Hippocampus" \
+#                            --mni "30, -20, -20" \
+#                            --vox "45 65 35" \
+#                            --cope "cope01" \
+#                            --radius "5mm" \
+#                            --outdir "/project/fsl"
 #
-# Inputs:
-#   --region  : A string describing the ROI region 
-#   --mni     : The MNI coordinates in the form x,y,z 
-#   --vox     : The voxel coordinates in the reference image 
-#   --cope    : The cope label/name
-#   --radius  : Sphere radius in mm
-#   --outdir  : The path to your output base folder
-#
-# Outputs:
-#   A spherical mask file named "<RegionAbbrev>_space-MNI152_desc-sphere<RADIUS>_binarized_mask.nii.gz"
-#   created inside: <OUTDIR>/roi/<COPE_LABEL>/
+# Requirements:
+#   - FSL installation with 'fslmaths' available in PATH
+#   - FEAT_DIR environment variable pointing to a valid .feat directory
 #
 # Notes:
-#   • The script requires FSL's 'fslmaths' in the PATH.
-#   • The FEAT_DIR environment variable must be set to point to a .feat directory
+#   Inputs:
+#     --region  : A string describing the ROI region
+#     --mni     : The MNI coordinates in the form x,y,z
+#     --vox     : The voxel coordinates in the reference image
+#     --cope    : The cope label/name
+#     --radius  : Sphere radius in mm
+#     --outdir  : The path to output base folder
+#
+#   Outputs:
+#     A spherical mask file named "<RegionAbbrev>_space-MNI152_desc-sphere<RADIUS>_binarized_mask.nii.gz"
+#     created inside: <OUTDIR>/roi/<COPE_LABEL>/
+#
+#   - The script requires FSL's 'fslmaths' in the PATH.
+#   - The FEAT_DIR environment variable must be set to point to a .feat directory
 #     (though typically usage is orchestrated by the parent pipeline).
-#   • The script includes an internal dictionary to abbreviate region names, but you can
+#   - The script includes an internal dictionary to abbreviate region names, but can
 #     modify or extend as needed.
 #
+#################################################################################
 
 set -e
 
@@ -219,7 +232,7 @@ echo ""
 ##############################################################################
 if [ -f "$sphere_bin" ]; then
   #
-  # If the final ROI already exists, we skip creation but maintain the new style output
+  # If the final ROI already exists, skip creation but maintain the new style output
   #
   echo "--- ROI Already Exists ---"
   echo "The final mask file already exists at:"

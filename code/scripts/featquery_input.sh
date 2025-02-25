@@ -1,35 +1,54 @@
 #!/usr/bin/env bash
-
-################################################################################
+#
+###############################################################################
 # featquery_input.sh
-# ------------------------------------------------------------------------------
-# This script demonstrates how to:
-#   1. Prompt the user to select between:
+#
+# Purpose:
+#   Script to select lower- or higher-level FEAT directories, gather subjects,
+#   sessions, and ROI masks, and call run_featquery.sh for final ROI extraction.
+#
+# Usage:
+#   featquery_input.sh
+#
+# Options:
+#   (Interactive script; no CLI flags. Follows prompts for directories & ROI
+#   selection.)
+#
+# Usage Examples:
+#   ./featquery_input.sh
+#
+# Requirements:
+#   - BASH shell
+#   - FSL installed (for featquery)
+#   - Sufficient permissions to read/write logs and output directories
+#
+# Notes:
+#   - Creates a log file in code/logs with a timestamped filename.
+#   - Appends final selection of directories & ROI masks, then calls run_featquery.sh.
+#   - Prompt to select between:
 #       - lower-level FEAT directories (option 1),
 #       - higher-level .gfeat directories (option 2),
 #       - Cancel (option 3).
-#   2. If option 1 is chosen, we search for "analysis" directories in level-1
+#   - If option 1 is chosen, search for "analysis" directories in level-1
 #      that contain .feat, discover sessions, collect .feat directories, and
-#      allow the user to confirm or edit the subject selections.
-#   3. If option 2 is chosen, we ask whether they want level-2 or level-3.
-#      - If level-2, we search for .gfeat/fixed-effects directories in level-2,
-#        discover sessions, collect .gfeat directories, and let the user confirm/edit.
-#      - If level-3 is selected, we just echo a placeholder for now.
-#   4. The user can remove subjects or type "edit" to do deeper re-selection.
+#      confirm or edit the subject selections.
+#   - If option 2 is chosen, select level-2 or level-3.
+#      - If level-2, search for .gfeat/fixed-effects directories in level-2,
+#        discover sessions, collect .gfeat directories, and option to confirm/edit.
+#      - If level-3 is selected, uses automatic inputs (last used level-3 inputs).
+#   - Can remove subjects or type "edit" to do deeper re-selection.
 #      Then finalize with Enter.
-#   5. After finalizing, we prompt the user to select or provide ROI directories
+#   - After finalizing, select or provide ROI directories
 #      from level-3 (searching for directories with 'desc' and 'group' + containing
 #      an 'roi' subfolder).
-#   6. Then we prompt the user for the specific ROI mask images within each chosen
-#      ROI directory. We look for files that contain "binarized" in the
+#   - Can select specific ROI mask images within each chosen
+#      ROI directory. Looks for files that contain "binarized" in the
 #      filename, with .nii / .nii.gz extension.
-#   7. In the end, we display final .feat directories, ROI directories, and ROI masks.
-#   8. Finally, we call run_featquery.sh (in the same directory) to pass along
-#      the final selections.
+#   - Display final .feat directories, ROI directories, and ROI masks.
+#   - Calls run_featquery.sh (in the same directory) to pass along
+#      the final selections
 #
-# Author: [Your Name]
-# Date:   [Date]
-################################################################################
+###############################################################################
 
 # ------------------------------------------------------------------------------
 # Set up environment and logging
@@ -217,7 +236,7 @@ collect_subjects_and_feat() {
 # display_confirmed_selections
 # ----------------------------------------------------------------------
 display_confirmed_selections() {
-    clear 
+    clear
     local session_name="$1"
     echo -e "\n=== Confirm Your Selections for FEATQUERY ==="
     echo "Session: $session_name"
@@ -453,6 +472,7 @@ edit_lower_level() {
         echo -e "\nYou have selected session: $ADD_SESSION" >> "$LOGFILE"
     fi
 
+    # Build an expression to find "sub-" (or similar) directories
     local SUBJECT_NAME_PATTERNS=("sub-*" "subject-*" "pilot-*" "subj-*" "subjpilot-*")
     local FIND_SUBJECT_EXPR=()
     local fp=true
@@ -465,15 +485,20 @@ edit_lower_level() {
         fi
     done
 
+    # Collect only subjects that actually have this session folder
     local ADD_SUBJECT_DIRS=()
     while IFS= read -r -d $'\0' sdir; do
-        ADD_SUBJECT_DIRS+=("$sdir")
+        # Check if sdir/ses-XX is present
+        if [ -d "$sdir/$ADD_SESSION" ]; then
+            ADD_SUBJECT_DIRS+=("$sdir")
+        fi
     done < <(find "$ADD_ANALYSIS_DIR" -mindepth 1 -maxdepth 1 -type d \( "${FIND_SUBJECT_EXPR[@]}" \) -print0 2>/dev/null)
+
     IFS=$'\n' ADD_SUBJECT_DIRS=($(printf "%s\n" "${ADD_SUBJECT_DIRS[@]}" | sort -u))
     unset IFS
 
     if [ ${#ADD_SUBJECT_DIRS[@]} -eq 0 ]; then
-        echo "No subject directories found. Returning..."
+        echo "No subject directories found (with session $ADD_SESSION). Returning..."
         return
     fi
 
@@ -483,7 +508,8 @@ edit_lower_level() {
     for sdir in "${ADD_SUBJECT_DIRS[@]}"; do
         local sub
         sub=$(basename "$sdir")
-        echo " $idx_counter)  $sub"
+        # Align display: e.g. " 1)  sub-02"
+        printf " %2d)  %s\n" "$idx_counter" "$sub"
         MAP_INDEX_TO_SUBJECTDIR[$idx_counter]="$sdir"
         idx_counter=$((idx_counter+1))
     done
@@ -513,16 +539,15 @@ edit_lower_level() {
     echo -e "\nListing directories for $ADD_SUBJECT in session $ADD_SESSION..." >> "$LOGFILE"
     echo
     echo "Select the directory(ies) to add or replace, separated by spaces."
-   
-    echo 
-    
+    echo
+
     local potential_dirs=()
     while IFS= read -r -d $'\0' fdir; do
         potential_dirs+=("$fdir")
     done < <(find "$ADD_SUBJECT_DIR/$ADD_SESSION" -type d -name "*.feat" -mindepth 1 -maxdepth 2 -print0 2>/dev/null)
 
     if [ ${#potential_dirs[@]} -eq 0 ]; then
-        echo "No valid .feat directories found. Returning..."
+        echo "No valid .feat directories found for $ADD_SUBJECT in $ADD_SESSION. Returning..."
         return
     fi
 
@@ -532,7 +557,7 @@ edit_lower_level() {
     local idxp=1
     declare -A MAP_INDEX_TO_FEAT
     for dd in "${potential_dirs[@]}"; do
-        echo " $idxp)  ${dd#$BASE_DIR/}"
+        printf " %2d)  %s\n" "$idxp" "${dd#$BASE_DIR/}"
         MAP_INDEX_TO_FEAT[$idxp]="$dd"
         idxp=$((idxp+1))
     done
@@ -540,12 +565,11 @@ edit_lower_level() {
     local user_input=""
     local valid_feat_choice=false
     local chosen_dirs=()
-   
+
     echo -e "\nPlease enter your choice [e.g. 1 2 3] or press Enter for all: "
     while [ "$valid_feat_choice" = false ]; do
         read -p "> " user_input
 
-        # If the user just presses Enter, select ALL directories.
         if [ -z "$user_input" ]; then
             chosen_dirs=("${potential_dirs[@]}")
             valid_feat_choice=true
@@ -563,7 +587,7 @@ edit_lower_level() {
                 break
             fi
             if (( token < 1 || token >= idxp )); then
-                echo "Invalid input: '$token' is out of range.Please try again."
+                echo "Invalid input: '$token' is out of range. Please try again."
                 invalid_index=true
                 break
             fi
@@ -587,8 +611,9 @@ edit_lower_level() {
     SESSIONS+=( "$ADD_SESSION" )
     DIR_TYPES+=( "$ADD_INPUT_TYPE" )
 
-    echo -e "\n[EDIT] Updated selection for subject $ADD_SUBJECT, session $ADD_SESSION." 
+    echo -e "\n[EDIT] Updated selection for subject $ADD_SUBJECT, session $ADD_SESSION."
 }
+
 
 # ----------------------------------------------------------------------
 # edit_higher_level
@@ -598,7 +623,6 @@ edit_higher_level() {
     echo -e "\n[INFO] You selected higher-level .gfeat directories.\n" >> "$LOGFILE"
 
     find_higher_level_analysis_dirs "$LEVEL_2_ANALYSIS_BASE_DIR"
-
     if [ ${#ANALYSIS_DIRS[@]} -eq 0 ]; then
         echo "No higher-level directories found. Returning..."
         return
@@ -675,15 +699,19 @@ edit_higher_level() {
         fi
     done
 
+    # Collect only subjects that have this chosen session
     local ADD_SUBJECT_DIRS=()
     while IFS= read -r -d $'\0' sdir; do
-        ADD_SUBJECT_DIRS+=("$sdir")
+        if [ -d "$sdir/$ADD_SESSION" ]; then
+            ADD_SUBJECT_DIRS+=("$sdir")
+        fi
     done < <(find "$ADD_ANALYSIS_DIR" -mindepth 1 -maxdepth 1 -type d \( "${FIND_SUBJECT_EXPR[@]}" \) -print0 2>/dev/null)
+
     IFS=$'\n' ADD_SUBJECT_DIRS=($(printf "%s\n" "${ADD_SUBJECT_DIRS[@]}" | sort -u))
     unset IFS
 
     if [ ${#ADD_SUBJECT_DIRS[@]} -eq 0 ]; then
-        echo "No subject directories found. Returning..."
+        echo "No subject directories found (with session $ADD_SESSION). Returning..."
         return
     fi
 
@@ -693,7 +721,7 @@ edit_higher_level() {
     for sdir in "${ADD_SUBJECT_DIRS[@]}"; do
         local sub
         sub=$(basename "$sdir")
-        echo " $idx_counter)  $sub"
+        printf " %2d)  %s\n" "$idx_counter" "$sub"
         MAP_INDEX_TO_SUBJECTDIR[$idx_counter]="$sdir"
         idx_counter=$((idx_counter+1))
     done
@@ -721,13 +749,14 @@ edit_higher_level() {
     remove_existing_subject_entries "$ADD_SUBJECT"
 
     echo -e "\nListing directories for $ADD_SUBJECT in session $ADD_SESSION..." >> "$LOGFILE"
+
     local potential_dirs=()
     while IFS= read -r -d $'\0' gdir; do
         potential_dirs+=("$gdir")
     done < <(find "$ADD_SUBJECT_DIR/$ADD_SESSION" -type d \( -name "*.gfeat" -o -iname "*fixed-effects*" \) -mindepth 1 -maxdepth 2 -print0 2>/dev/null)
 
     if [ ${#potential_dirs[@]} -eq 0 ]; then
-        echo "No valid .gfeat/fixed-effects directories found. Returning..."
+        echo "No valid .gfeat/fixed-effects directories found for $ADD_SUBJECT in $ADD_SESSION. Returning..."
         return
     fi
 
@@ -739,7 +768,7 @@ edit_higher_level() {
     local idxp=1
     declare -A MAP_INDEX_TO_GFEAT
     for dd in "${potential_dirs[@]}"; do
-        echo " $idxp)  ${dd#$BASE_DIR/}"
+        printf " %2d)  %s\n" "$idxp" "${dd#$BASE_DIR/}"
         MAP_INDEX_TO_GFEAT[$idxp]="$dd"
         idxp=$((idxp+1))
     done
@@ -773,7 +802,7 @@ edit_higher_level() {
                 invalid_index=true
                 break
             fi
-            temp_dirs+=("${MAP_INDEX_TO_GFEAT[$token]}")
+            temp_dirs+=( "${MAP_INDEX_TO_GFEAT[$token]}" )
         done
 
         if $invalid_index; then
@@ -1061,7 +1090,7 @@ prompt_for_roi_masks() {
                 done
 
                 if $invalid_choice; then
-                    continue 
+                    continue
                 else
                     for num in "${numeric_tokens[@]}"; do
                         ROI_MASK_SELECTIONS+=( "${MAP_MASK_INDEX_TO_FILE[$num]}" )
@@ -1456,7 +1485,7 @@ select_level_3_analysis() {
 
 
 ###############################################################################
-# Main Script 
+# Main Script
 ###############################################################################
 
 echo
@@ -1562,7 +1591,7 @@ while true; do
             # Let user confirm or remove
             confirmation_loop
             echo -e "\nFinalizing selection and continuing (lower-level)..."
-            
+
             # Finalize => populates FINAL_DIRS
             finalize_selection
 
@@ -1603,10 +1632,7 @@ while true; do
                     # -------------- LEVEL-3 PATH --------------
                     select_level_3_analysis
 
-                    # We skip build_featquery_output_dirs_for_level3,
-                    # and directly call run_featquery.sh using COPE_DIRS_MAP + COPE_MASKS_MAP
-
-                    # We'll flatten them into arrays, then prompt for nothing else if you prefer:
+                    # Flatten them into arrays to pass to run_featquery
                     ALL_L3_FEAT_DIRS=()
                     ALL_L3_ROI_MASKS=()
 
@@ -1726,10 +1752,10 @@ while true; do
 
             else
                 # If no valid level-3 found, only do level-2
-                echo "[INFO] Sorry, no level-3 directories meet the threshold. Offering only level-2..."
+                echo "[INFO] Sorry, no level-3 directories meet the threshold. Offering only level-2..." >> "$LOGFILE"
                 echo
 
-                echo "[INFO] Searching for level-2 .gfeat or 'fixed-effects' directories."
+                echo "[INFO] Searching for level-2 .gfeat or 'fixed-effects' directories." >> "$LOGFILE"
                 find_higher_level_analysis_dirs "$LEVEL_2_ANALYSIS_BASE_DIR"
 
                 if [ ${#ANALYSIS_DIRS[@]} -eq 0 ]; then

@@ -1,6 +1,40 @@
 #!/bin/bash
-
-# Field Map Correction Script (run_fieldmap_correction.sh)
+#
+###############################################################################
+# run_fieldmap_correction.sh
+#
+# Purpose:
+#   Applies fieldmap correction using topup on fMRI data (task-based or resting-state).
+#   Extracts the first volume of each AP/PA series to generate a susceptibility field map
+#   and corrects distortion in the BOLD data.
+#
+# Usage:
+#   run_fieldmap_correction.sh --base-dir BASE_DIR --preproc-type (task|rest) [--session SESSIONS...] [SUBJECT_IDS...]
+#
+#   If no subject IDs are specified, the script will attempt to find all subjects in BASE_DIR
+#   that match "sub-*" or "pilot-*". If no session IDs are specified, it will attempt to find
+#   all sessions named "ses-*" for each subject.
+#
+# Usage Examples:
+#   1) Basic usage for task-based fMRI across all subjects/sessions:
+#      run_fieldmap_correction.sh --base-dir /path/to/BIDS --preproc-type task
+#
+#   2) For resting-state fMRI, only for sub-01 and sub-02, session ses-01:
+#      run_fieldmap_correction.sh --base-dir /path/to/BIDS --preproc-type rest --session ses-01 sub-01 sub-02
+#
+# Requirements:
+#   - FSL (for topup, fslroi, fslmerge, applytopup)
+#   - jq (for parsing JSON metadata; e.g., `brew install jq`)
+#   - BIDS-style directory structure (or at least similarly named AP/PA data files)
+#
+# Notes:
+#   - This script is typically called from within a larger pipeline (e.g., fmri_preprocessing.sh).
+#   - It creates output directories under `derivatives/fsl/topup` for each subject/session.
+#   - It expects reversed-phase data named with patterns that include `_dir-PA_epi.nii.gz`
+#     or `_dir-PA_bold.nii.gz` for PA, and the main BOLD data with `_task-*_bold.nii.gz`.
+#   - Cleans up intermediate AP/PA first-volume files after correction.
+#
+###############################################################################
 
 BASE_DIR=""
 SESSIONS=()
@@ -192,20 +226,46 @@ shopt -s extglob
                 PHASE_DIR=$(jq -r '.PhaseEncodingDirection' "$BOLD_JSON")
                 READOUT_TIME=$(jq -r '.TotalReadoutTime' "$BOLD_JSON")
 
-                # Find PA file
                 if [ "$PREPROCESSING_TYPE" == "task" ]; then
+                    #
+                    # If there is a TASK_NAME (e.g., 'motor', 'rest'):
+                    #
                     if [ -n "$TASK_NAME" ]; then
+                        #  Try "*task-${TASK_NAME}_dir-PA_epi.nii.gz" but exclude any containing 'rest' if it's not actually rest
                         PA_FILE=$(find "$FUNC_DIR" -type f -name "*task-${TASK_NAME}_dir-PA_epi.nii.gz" ! -name "*rest*" | sort -V | head -n 1)
+                        #  If not found, try "*task-${TASK_NAME}_dir-PA_bold.nii.gz" but exclude any containing 'rest' if it's not actually rest
+                        if [ -z "$PA_FILE" ]; then
+                            PA_FILE=$(find "$FUNC_DIR" -type f -name "*task-${TASK_NAME}_dir-PA_bold.nii.gz" ! -name "*rest*" | sort -V | head -n 1)
+                        fi
                     fi
+                    #
+                    # If still not found (or no TASK_NAME was extracted), try more general patterns:
+                    #
                     if [ -z "$PA_FILE" ]; then
+                        #  Any PA EPI that doesn’t have “rest” in the name
                         PA_FILE=$(find "$FUNC_DIR" -type f -name "*_dir-PA_epi.nii.gz" ! -name "*rest*" | sort -V | head -n 1)
+                        #  If still empty, any PA BOLD that doesn’t have “rest” in the name
+                        if [ -z "$PA_FILE" ]; then
+                            PA_FILE=$(find "$FUNC_DIR" -type f -name "*_dir-PA_bold.nii.gz" ! -name "*rest*" | sort -V | head -n 1)
+                        fi
                     fi
                 else
+                    #
+                    # For resting-state: look for files specifically containing "task-rest_dir-PA"
+                    #
                     PA_FILE=$(find "$FUNC_DIR" -type f -name "*_task-rest_dir-PA_epi.nii.gz" | sort -V | head -n 1)
+                    if [ -z "$PA_FILE" ]; then
+                        PA_FILE=$(find "$FUNC_DIR" -type f -name "*_task-rest_dir-PA_bold.nii.gz" | sort -V | head -n 1)
+                    fi
+                    # If still not found, fall back to any with _dir-PA_epi or _dir-PA_bold
                     if [ -z "$PA_FILE" ]; then
                         PA_FILE=$(find "$FUNC_DIR" -type f -name "*_dir-PA_epi.nii.gz" | sort -V | head -n 1)
                     fi
+                    if [ -z "$PA_FILE" ]; then
+                        PA_FILE=$(find "$FUNC_DIR" -type f -name "*_dir-PA_bold.nii.gz" | sort -V | head -n 1)
+                    fi
                 fi
+                # --------------------------------------------------
 
                 echo ""
                 echo "[Step 2] Extracting first volume of PA:"
@@ -276,7 +336,9 @@ shopt -s extglob
                 mv "${TOPUP_OUTPUT_BASE}_fieldmap.nii.gz" "$FIELD_MAP"
 
                 # Cleanup
-                rm -f "$AP_IMAGE" "$PA_IMAGE" "$MERGED_AP_PA" "${TOPUP_OUTPUT_BASE}_results_fieldcoef.nii.gz" "${TOPUP_OUTPUT_BASE}_results_movpar.txt"
+                rm -f "$AP_IMAGE" "$PA_IMAGE" "$MERGED_AP_PA" \
+                      "${TOPUP_OUTPUT_BASE}_results_fieldcoef.nii.gz" \
+                      "${TOPUP_OUTPUT_BASE}_results_movpar.txt"
                 echo ""
             done
         done

@@ -1,8 +1,32 @@
 #!/bin/bash
-
+#
+################################################################################
 # create_event_files.sh
 #
-# Converts .tsv event files into .txt format (3 columns: onset, duration, amplitude=1.000).
+# Purpose:
+#   Converts BIDS .tsv event files into simple 3-column .txt files (onset, duration, amplitude=1).
+#   Useful for FSL FEAT or other pipelines expecting .txt-based event files.
+#
+# Usage:
+#   create_event_files.sh --base-dir <dir> --num-runs <N> --trial-type <type> [options] [SUBJECTS...]
+#
+# Options:
+#   --base-dir <dir>     Base directory of the project (required)
+#   --num-runs <N>       Number of runs to look for (required)
+#   --trial-type <type>  One or more trial types (e.g., 'encoding_pair' or 'recog_pair')
+#   --session <name>     Session(s) to process (e.g., ses-01)
+#   -h, --help           Show usage info and exit
+#
+# Usage Examples:
+#   1) create_event_files.sh --base-dir /myproj --num-runs 2 --trial-type encoding_pair sub-01 sub-02
+#   2) create_event_files.sh --base-dir /myproj --num-runs 3 --trial-type face --trial-type place
+#   3) create_event_files.sh --base-dir /myproj --session ses-01 --num-runs 1 --trial-type recog_pair
+#
+# Notes:
+#   - Outputs .txt files in <base-dir>/derivatives/custom_events/<sub>/<ses>.
+#   - If no subjects given, auto-detect sub-* or pilot-* directories.
+#
+###############################################################################
 
 BASE_DIR=""
 NUM_RUNS=""
@@ -12,7 +36,14 @@ SUBJECTS=()
 SUBJECT_PREFIXES=("sub" "pilot")
 
 usage() {
-    echo "Usage: $0 --base-dir BASE_DIR --num-runs N --trial-type TYPE [--trial-type TYPE2 ...] [--session SESSIONS...] [SUBJECTS...]"
+    echo "Usage: $0 --base-dir <dir> --num-runs <N> --trial-type <type> [options] [SUBJECTS...]"
+    echo ""
+    echo "Options:"
+    echo "  --base-dir <dir>     Base directory of the project (required)"
+    echo "  --num-runs <N>       Number of runs (required)"
+    echo "  --trial-type <type>  One or more trial types"
+    echo "  --session <name>     Session(s) (e.g., ses-01)"
+    echo "  -h, --help           Show usage info and exit"
     exit 1
 }
 
@@ -73,7 +104,7 @@ fi
 
 while [ ! -d "$BASE_DIR" ]; do
     echo "Base dir '$BASE_DIR' does not exist."
-    read -p "Enter valid base dir:" BASE_DIR
+    read -p "Enter valid base dir: " BASE_DIR
 done
 
 LOG_DIR="${BASE_DIR}/code/logs"
@@ -87,14 +118,15 @@ EVENTS_DIR="${BASE_DIR}/derivatives/custom_events"
 
 # If no subjects provided, find all
 if [ ${#SUBJECTS[@]} -eq 0 ]; then
+    # sub-*
     SUBJECTS=($(find "$BASE_DIR" -maxdepth 1 -type d -name "sub-*" -exec basename {} \;))
+    # pilot-*
     PILOT_SUBJS=($(find "$BASE_DIR" -maxdepth 1 -type d -name "pilot-*" -exec basename {} \;))
     SUBJECTS+=("${PILOT_SUBJS[@]}")
     IFS=$'\n' SUBJECTS=($(printf "%s\n" "${SUBJECTS[@]}" | sort -uV))
 fi
 
-echo -e "\nFound ${#SUBJECTS[@]} subject directories."
-echo ""
+echo -e "\nFound ${#SUBJECTS[@]} subject directories.\n"
 
 for subj in "${SUBJECTS[@]}"; do
     echo "=== Processing subject: $subj ==="

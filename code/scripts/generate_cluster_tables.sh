@@ -1,48 +1,69 @@
 #!/usr/bin/env bash
 #
+#################################################################################
 # generate_cluster_tables.sh
 #
-# PURPOSE:
-#   1. Reads cluster_zstat1_std.txt and lmax_zstat1_std.txt from an FSL group-level .gfeat directory
-#      (specified by the FEAT_DIR environment variable).
-#   2. Collects clusters and local maxima (peaks), then performs atlas lookups (Harvard-Oxford atlas)
-#      for both cortical and subcortical structures.
-#   3. Prints summary tables of these clusters and local maxima to the console,
-#      labeling probable regions with the highest overlap probability.
-#   4. Assigns each unique coordinate an ROI ID. These ROI IDs are primarily determined by
-#      highest-probability **cortical** regions (from the Harvard-Oxford atlas).
-#   5. Guides the user to select which ROI IDs to create spherical masks for, prompting for a radius
-#      (default 5 mm), then calls create_spherical_rois.sh to actually generate ROI mask files.
+# Purpose:
+#   This script is part of a workflow for generating spherical ROIs based on group-level
+#   FSL FEAT results. After reading cluster information from cluster_zstat1_std.txt and
+#   lmax_zstat1_std.txt in an FSL group-level .gfeat directory, it performs atlas queries
+#   (Harvard-Oxford) for cortical/subcortical structures, prints summary tables with probable
+#   regions labeled, and guides the user in selecting ROI IDs to create spherical masks.
+#   Finally, it calls create_spherical_rois.sh to generate the actual ROI mask files.
 #
-# USAGE:
-#   • Typically called by a higher-level script (e.g., select_group_roi.sh) after the user has chosen
+#   Detailed Steps:
+#     1. Reads cluster_zstat1_std.txt and lmax_zstat1_std.txt from an FSL group-level .gfeat directory
+#        (specified by the FEAT_DIR environment variable).
+#     2. Collects clusters and local maxima (peaks), then performs atlas lookups (Harvard-Oxford atlas)
+#        for both cortical and subcortical structures.
+#     3. Prints summary tables of these clusters and local maxima to the console,
+#        labeling probable regions with the highest overlap probability.
+#     4. Assigns each unique coordinate an ROI ID. These ROI IDs are primarily determined by
+#        highest-probability cortical regions.
+#     5. Guides the to select which ROI IDs to create spherical masks for, prompting for a radius
+#        (default 5 mm), then calls create_spherical_rois.sh to actually generate ROI mask files.
+#
+# Usage:
+#   - Typically called by a higher-level script (e.g., select_group_roi.sh) after the choosing
 #     a group-level .gfeat folder and the corresponding COPE number.
-#   • Expects these environment variables:
+#   - Expects these environment variables:
 #       - FEAT_DIR    (points to a .feat directory containing cluster_zstat1_std.txt & lmax_zstat1_std.txt)
 #       - COPE_NAME   (e.g., "cope1")
 #       - OUTDIR_BASE (the base path in which ROI directories will be created)
 #
-# OUTPUTS & INTERACTIONS:
-#   • Displays a cluster summary table (Z-MAX, Z-COG, COPE-MAX, local maxima).
-#   • Labels probable cortical/subcortical areas by querying the Harvard-Oxford atlas (atlasq).
-#   • Assigns ROI IDs for each coordinate; user selects which IDs to turn into spherical ROIs.
-#   • If the user picks ROI(s), the script calls create_spherical_rois.sh, passing each selected coordinate,
-#     region label, and sphere radius. 
+# Usage Examples:
+#   1) Manually calling this script in a terminal (assuming environment variables are set):
+#        export FEAT_DIR="/path/to/stats/cope1.feat"
+#        export COPE_NAME="cope1"
+#        export OUTDIR_BASE="/path/to/derivatives/fsl/level-3"
+#        bash generate_cluster_tables.sh
 #
-# REQUIREMENTS:
-#   • FSL environment loaded (atlasq, std2imgcoord, fslmaths, etc.).
-#   • cluster_zstat1_std.txt and lmax_zstat1_std.txt in $FEAT_DIR.
-#   • MNI152_T1_2mm_brain.nii.gz as the reference standard image (usually found in $FSLDIR/data/standard).
+#   2) In a pipeline where `select_group_roi.sh` already sets environment variables and calls this script:
+#        ./select_group_roi.sh
+#      (No manual environment variable export is needed in this example, as the script sets them.)
 #
-# NOTES:
-#   • Logs progress to code/logs/<script>_<timestamp>.log.
-#   • The user can press ENTER at the ROI selection prompt to select **all** ROI IDs.
-#   • The user can press ENTER at the radius prompt to default to **5 mm**.
+# Requirements:
+#   - FSL environment loaded (atlasq, std2imgcoord, fslmaths, etc.).
+#   - cluster_zstat1_std.txt and lmax_zstat1_std.txt in $FEAT_DIR.
+#   - MNI152_T1_2mm_brain.nii.gz as the reference standard image (usually found in $FSLDIR/data/standard).
+#
+# Notes:
+#   - Outputs & Interactions:
+#     - Displays a cluster summary table (Z-MAX, Z-COG, COPE-MAX, local maxima).
+#     - Labels probable cortical/subcortical areas by querying the Harvard-Oxford atlas (atlasq).
+#     - Assigns ROI IDs for each coordinate; user selects which IDs to turn into spherical ROIs.
+#     - If the selecting ROI(s), the script calls create_spherical_rois.sh, passing each selected coordinate,
+#       region label, and sphere radius.
+#   - The script logs progress to code/logs/<script>_<timestamp>.log.
+#   - Can press ENTER at the ROI selection prompt to select all ROI IDs.
+#   - Can press ENTER at the radius prompt to default to 5 mm.
 #
 #   **Harvard-Oxford Atlas**:
 #     - Queries 'harvardoxford-cortical' for cortical regions.
 #     - Queries 'harvardoxford-subcortical' for subcortical structures.
 #     - Uses a MIN_PROB threshold (default 5%) to filter out lower-probability overlapping labels.
+#
+##################################################################################
 
 set -e
 
