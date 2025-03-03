@@ -1,2 +1,9 @@
+# macOS
 .DS_Store
-.DS_Store
+
+# Python cache/virtual environment
+__pycache__/
+.venv/
+
+# IDE settings
+.idea/

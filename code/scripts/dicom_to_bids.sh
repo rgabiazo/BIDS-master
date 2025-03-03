@@ -35,8 +35,7 @@
 #   -pa, --process-pa [T]   Process phase-encoded PA scans, optional <task_name>
 #   -rest, --resting-state  Process resting-state scans
 #   -anat, --anatomical A1 [A2 ...]
-#                           Process one or more anatomical scans:
-#                               t1w, t2w, hipp
+#                           Process one or more anatomical scans (t1w, t2w, hipp)
 #   -diff, --diffusion      Process diffusion scans
 #   -h, --help              Show this help message and exit
 #
@@ -104,6 +103,8 @@ anat_types=()
 subjects=()
 sessions=()
 
+remove_archives=true   # Set this to "true" to remove the subject session directory with .zip / .tar.* files after conversion
+
 # Create log directory if it doesn't exist
 mkdir -p "$log_dir"
 log_file="${log_dir}/$(basename "$0")_$(date +%Y-%m-%d_%H-%M-%S).log"
@@ -134,7 +135,6 @@ while [[ $# -gt 0 ]]; do
         -t|--task)
             process_task=true
             task_name="$2"
-            # Validate
             if [[ "$task_name" == -* ]] || [[ -z "$task_name" ]]; then
                 log "\nWarning: Task name is missing/invalid; skipping -t option."
                 task_name=""
@@ -149,7 +149,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         -pa|--process-pa)
             process_pa=true
-            # If next token is not another dash-arg, treat it as the PA "task" name
             if [[ "$2" != "" && "$2" != -* && "$2" != sub-* && "$2" != ses-* && "$2" != all ]]; then
                 pa_task_name="$2"
                 shift 2
@@ -160,7 +159,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         -anat|--anatomical)
             shift
-            # Collect all subsequent arguments until another dash option or sub-/ses-/all is given
             while [[ $# -gt 0 && "$1" != -* && "$1" != sub-* && "$1" != ses-* && "$1" != "all" ]]; do
                 anat_types+=("$1")
                 shift
@@ -191,17 +189,21 @@ done
 ########################################
 if [[ " ${subjects[@]} " =~ " all " ]]; then
     log "\n=== Processing all subjects ==="
-    # Find sub-* directories in Dicom that contain .zip or some DICOM content
+    # Find sub-* directories in Dicom that contain .zip or .tar* files
     subjects=($(find "$dcm_dir" -type d -name "sub-*" -exec bash -c '
         for dir; do
-            if find "$dir" -type d -name "ses-*" -exec find {} -maxdepth 1 -name "*.zip" \; | grep -q .; then
+            # Check each ses-* folder in sub-XX for any .zip, .tar, .tar.gz, .tgz, .tar.bz2
+            if find "$dir" -type d -name "ses-*" \
+                -exec find {} -maxdepth 1 -type f \
+                    \( -name "*.zip" -o -name "*.tar" -o -name "*.tar.gz" -o -name "*.tgz" -o -name "*.tar.bz2" \) \; \
+                | grep -q .; then
                 basename "$dir"
             fi
         done
     ' _ {} + | sort))
 
     if [ ${#subjects[@]} -eq 0 ]; then
-        log "\nNo subjects with .zip files found in $dcm_dir."
+        log "\nNo subjects with .zip or .tar files found in $dcm_dir."
         exit 1
     fi
     log "\nFound subjects: ${subjects[*]}\n"
@@ -314,10 +316,6 @@ process_pa_scans() {
     log "\nDone with PA scans."
 }
 
-##
-## Resting-state function to look in both 'rfMRI_REST_AP' and 'rfMRI_REST_PA'
-## and handles "PA" versions of rest scans.
-##
 process_resting_state_scans() {
     local subj="$1"
     local session="$2"
@@ -340,7 +338,6 @@ process_resting_state_scans() {
             local rest_file
             rest_file=$(find "$rd_path" -type f -name "*.nii.gz" | sort -V | tail -1)
             if [ -n "$rest_file" ]; then
-                # Name the BOLD file according to whether it's AP or PA
                 local direction=""
                 if [[ "$rd" == *"AP" ]]; then
                     direction="AP"
@@ -348,7 +345,6 @@ process_resting_state_scans() {
                     direction="PA"
                 fi
 
-                # sub-XX_ses-YY_task-rest_dir-AP_bold.nii.gz  OR  _dir-PA_bold.nii.gz
                 local new_rest="$output_dir/${subj}_${session}_task-rest_dir-${direction}_bold.nii.gz"
                 log ""
                 if [ -f "$new_rest" ]; then
@@ -511,7 +507,6 @@ process_diffusion_scans() {
     local ap_dir="$nifti_subj_ses_dir/diff_mb3_95dir_b2000_AP"
     if [ -d "$ap_dir" ]; then
         local ap_file
-        # For convenience, just grab the last .nii.gz
         ap_file=$(find "$ap_dir" -type f -name "*.nii.gz" | sort -V | tail -1)
         if [ -n "$ap_file" ]; then
             local base="${subj}_${session}_dir-AP_dwi.nii.gz"
@@ -521,7 +516,6 @@ process_diffusion_scans() {
                 log "Moving AP DWI: $ap_file → $new_ap"
                 mv "$ap_file" "$new_ap"
 
-                # Move sidecars if they exist
                 local old_root="${ap_file%.nii.gz}"
                 local new_root="${new_ap%.nii.gz}"
 
@@ -570,64 +564,136 @@ process_diffusion_scans() {
 # 5) Main processing loop
 ########################################
 for subj in "${subjects[@]}"; do
-    local_subj_dir="$dcm_dir/$subj"
-    if [ ! -d "$local_subj_dir" ]; then
-        log "\n=== $subj ==="
-        log "DICOM directory not found: $local_subj_dir"
-        continue
-    fi
+    log "\n=== Processing subject: $subj ==="
 
-    # Determine sessions to process
-    if [ ${#sessions[@]} -gt 0 ]; then
-        # Specified sessions
-        sessions_to_process=()
-        for ses in "${sessions[@]}"; do
-            [ -d "$local_subj_dir/$ses" ] && sessions_to_process+=("$ses") || \
-                log "\nWarning: $subj has no $ses in DICOM."
-        done
-    else
-        # auto-detect
-        sessions_to_process=($(find "$local_subj_dir" -type d -name "ses-*" -exec bash -c '
+    local_subj_dir="$dcm_dir/$subj"      # e.g. /path/to/Dicom/sub-01
+    nifti_subj_dir="$nifti_dir/$subj"    # e.g. /path/to/Nifti/sub-01
+
+    # -------------------------------------------
+    # (A) Gather session folders from DICOM
+    # -------------------------------------------
+    sessions_to_process=()
+    if [ -d "$local_subj_dir" ]; then
+        mapfile -t dicom_ses < <(find "$local_subj_dir" -maxdepth 1 -type d -name "ses-*" -exec bash -c '
             for sdir; do
-                if find "$sdir" -maxdepth 1 -name "*.zip" | grep -q .; then
+                # If this ses-* folder has .zip/.tar.* files, consider it
+                if find "$sdir" -maxdepth 1 -type f \
+                   \( -name "*.zip" -o -name "*.tar" -o -name "*.tar.gz" -o -name "*.tgz" -o -name "*.tar.bz2" \) \
+                   | grep -q .; then
                     basename "$sdir"
                 fi
             done
-        ' _ {} + | sort))
+        ' _ {} + | sort)
+        sessions_to_process+=( "${dicom_ses[@]}" )
+    else
+        log "\nNo DICOM folder for $subj at: $local_subj_dir"
     fi
 
-    [ ${#sessions_to_process[@]} -eq 0 ] && log "\nNo valid sessions for $subj" && continue
+    # -------------------------------------------
+    # (B) If no sessions found in DICOM, see if
+    #     NIfTI has any sub-XX/ses-XX directories
+    # -------------------------------------------
+    if [ ${#sessions_to_process[@]} -eq 0 ]; then
+        if [ -d "$nifti_subj_dir" ]; then
+            mapfile -t nifti_ses < <(find "$nifti_subj_dir" -maxdepth 1 -type d -name "ses-*" -exec basename {} \;)
+            if [ ${#nifti_ses[@]} -gt 0 ]; then
+                log "Found sessions in NIfTI: ${nifti_ses[*]}"
+                sessions_to_process+=( "${nifti_ses[@]}" )
+            fi
+        fi
+    fi
 
-    log "\n=== Processing $subj ==="
-    log "Sessions: ${sessions_to_process[*]}"
+    # If still no sessions, skip
+    if [ ${#sessions_to_process[@]} -eq 0 ]; then
+        log "No sessions found for $subj (neither in DICOM nor NIfTI). Skipping."
+        continue
+    fi
 
+    log "Sessions to process for $subj: ${sessions_to_process[*]}"
+
+    # -------------------------------------------
+    # (C) Loop over each session
+    # -------------------------------------------
     for ses in "${sessions_to_process[@]}"; do
-        subj_ses_dcm="$local_subj_dir/$ses"
-        nifti_subj_ses_dir="$nifti_dir/$subj/$ses"
-        bids_subj_ses_dir="$bids_dir/$subj/$ses"
-
         log "\n--- $subj $ses ---"
 
-        ############################
-        # 5a) DICOM → NIfTI if requested
-        ############################
+        # Potential DICOM session path
+        subj_ses_dcm="$local_subj_dir/$ses"
+
+        # NIfTI session path
+        nifti_subj_ses_dir="$nifti_subj_dir/$ses"
+
+        # BIDS session path
+        bids_subj_ses_dir="$bids_dir/$subj/$ses"
+
+        # -------------------------------------------------
+        # (C1) If DICOM→NIfTI, check if
+        #      DICOM session folder still exists
+        # -------------------------------------------------
         if [ "$dcm2Nifti" = true ]; then
             log "\n--- DICOM to NIfTI Conversion ---"
-
+            
+            # Find dcm2niix in the PATH
+            dcm2niix_cmd="$(command -v dcm2niix)"
+            
+            # If not found, exit with error
+            if [[ -z "$dcm2niix_cmd" ]]; then
+                log "ERROR: dcm2niix not found on your PATH. Please install or specify the full path."
+                exit 1
+            fi
+            
             # Skip if already have non-empty NIfTI
             if [ -d "$nifti_subj_ses_dir" ] && [ "$(ls -A "$nifti_subj_ses_dir")" ]; then
                 log "\nNIfTI dir $nifti_subj_ses_dir already populated, skipping conversion."
             else
-                # Unzip DICOM if needed
                 if [ ! -d "${subj_ses_dcm}/DICOM" ]; then
-                    if ls "${subj_ses_dcm}"/*.zip &>/dev/null; then
-                        unzip "${subj_ses_dcm}"/*.zip -d "$subj_ses_dcm" \
-                            && log "\nUnzipped DICOM for $subj $ses." \
-                            || log "\nError unzipping for $subj $ses."
-                    else
-                        log "\nNo DICOM zip in $subj_ses_dcm; skipping."
-                        continue
+                    # Look for any zip/tar/tar.gz/tgz/tar.bz2 in $subj_ses_dcm
+                    mapfile -t archives < <(find "$subj_ses_dcm" -maxdepth 1 -type f \
+                                            \( -name "*.zip" \
+                                               -o -name "*.tar" \
+                                               -o -name "*.tar.gz" \
+                                               -o -name "*.tgz" \
+                                               -o -name "*.tar.bz2" \))
+                    if [ ${#archives[@]} -eq 0 ]; then
+                        log "\nNo new DICOM archive found in $subj_ses_dcm."
+                        log "Will check if existing NIfTI can be moved to BIDS..."
                     fi
+
+                    # Unpack each archive found
+                    for arch in "${archives[@]}"; do
+                        case "$arch" in
+                            *.zip)
+                                log "\nUnzipping: $arch"
+                                unzip -o "$arch" -d "$subj_ses_dcm"
+                                ;;
+                            *.tar)
+                                log "\nExtracting .tar: $arch"
+                                tar -xf "$arch" -C "$subj_ses_dcm"
+                                ;;
+                            *.tar.gz|*.tgz)
+                                log "\nExtracting .tar.gz: $arch"
+                                tar -xzf "$arch" -C "$subj_ses_dcm"
+                                ;;
+                            *.tar.bz2)
+                                log "\nExtracting .tar.bz2: $arch"
+                                tar -xjf "$arch" -C "$subj_ses_dcm"
+                                ;;
+                        esac
+                    done
+                    
+                    # Find any *.dcm file
+                    dcmdir="$(find "$subj_ses_dcm" -type f -name '*.dcm' -exec dirname {} \; | sort -u | head -n 1)"
+                    
+                    # Take that directory's *parent* as the one to rename, to rename e.g. "1.DD06792A" → "DICOM" (following .tar)
+                    parentdir="$(dirname "$(dirname "$(dirname "$(dirname "$(dirname "$dcmdir")")")")")"
+                    
+                    # Take that directory's parent as the one to rename, to rename e.g. "1.DD06792A" → "DICOM"
+                    # Rename only if it isn't already "DICOM"
+                    if [[ -n "$parentdir" && "$parentdir" != "$subj_ses_dcm/DICOM" ]]; then
+                        log "Renaming '$parentdir' → '$subj_ses_dcm/DICOM'"
+                        mv "$parentdir" "$subj_ses_dcm/DICOM"
+                    fi
+                    
                 else
                     log "\nDICOM folder already exists: ${subj_ses_dcm}/DICOM"
                 fi
@@ -636,34 +702,28 @@ for subj in "${subjects[@]}"; do
                 tmp_out="${subj_ses_dcm}/nifti_output"
                 mkdir -p "$tmp_out"
                 dicom_dirs=$(find "${subj_ses_dcm}/DICOM" -type d)
+                
+                
                 for dirX in $dicom_dirs; do
                     if ls "$dirX"/*.dcm &>/dev/null; then
                         log ""
                         log "Converting $dirX with dcm2niix..."
-                        /Applications/MRIcron.app/Contents/Resources/dcm2niix \
+                        "$dcm2niix_cmd" \
                             -f "${subj}_%p_%s" -p y -z y -o "$tmp_out" "$dirX"
                     fi
                 done
 
                 log ""
-
-                # ----------------------------------------------------------------
-                # Gather .nii.gz, .bval, .bvec, .json in tmp_out and put them in subfolders
-                # based on the scan naming patterns. Does a single loop to also
-                # move sidecar files consistently.
-                # ----------------------------------------------------------------
+                # Gather .nii.gz, .bval, etc. in tmp_out and put in subfolders
                 mapfile -t candidate_files < <(find "$tmp_out" -maxdepth 1 -type f \( -name "*.nii.gz" -o -name "*.bval" -o -name "*.bvec" -o -name "*.json" \))
                 for fpath in "${candidate_files[@]}"; do
                     baseNF=$(basename "$fpath")
-                    # Strip off any recognized extension to parse the core name
                     core="${baseNF%.nii.gz}"
                     core="${core%.bval}"
                     core="${core%.bvec}"
                     core="${core%.json}"
 
                     folder="UNSORTED"
-
-                    # Simple substring checks to decide the folder:
                     if [[ "$core" =~ rfMRI_TASK_AP ]]; then
                         folder="rfMRI_TASK_AP"
                     elif [[ "$core" =~ rfMRI_REST_AP ]]; then
@@ -697,7 +757,6 @@ for subj in "${subjects[@]}"; do
                     log "Moved $baseNF → $folder"
                 done
 
-                # Move everything from tmp_out/* to the final NIfTI directory
                 mkdir -p "$nifti_subj_ses_dir"
                 mv "$tmp_out"/* "$nifti_subj_ses_dir/"
                 log "\nOrganized NIfTI into $nifti_subj_ses_dir"
@@ -705,14 +764,35 @@ for subj in "${subjects[@]}"; do
                 rm -rf "$tmp_out"
                 log "Removed temp $tmp_out"
 
-                rm -rf "${subj_ses_dcm}/DICOM"
-                log "Removed ${subj_ses_dcm}/DICOM"
+                # Check if subject directory is empty
+                if [ "$remove_archives" = true ]; then
+                    # 1) Remove the just-processed session directory
+                    rm -rf "$subj_ses_dcm"
+                    log "Removed the session folder for $subj_ses_dcm" >> "$log_file"
+                    
+                    # 2) Check if ANY ses-* folders remain in sub-XXX
+                    remaining_sessions=($(find "$local_subj_dir" -mindepth 1 -maxdepth 1 -type d -name 'ses-*' | sort))
+                    
+                    if [ ${#remaining_sessions[@]} -eq 0 ]; then
+                        rm -rf "$local_subj_dir" # If zero sessions remain => remove entire subject folder
+                        log "Removed the entire directory for $subj: $local_subj_dir" >> "$log_file"
+                    fi
+                    
+                else
+                    # If not removing archives, just remove the DICOM/ subfolder
+                    rm -rf "${subj_ses_dcm}/DICOM"
+                    log "Removed DICOM folder in $subj_ses_dcm" >> $log_file
+                    
+                fi
+                
             fi
         else
             # Not converting
             if [ ! -d "$nifti_subj_ses_dir" ] || [ ! "$(ls -A "$nifti_subj_ses_dir")" ]; then
                 log "\nEmpty NIfTI dir: $nifti_subj_ses_dir (skip scans)"
                 continue
+            else
+                log "\nNIfTI directory found: $nifti_subj_ses_dir. Moving scans to BIDS..."
             fi
         fi
 
@@ -734,22 +814,62 @@ for subj in "${subjects[@]}"; do
     done
 done
 
-log "\n=== Updating participants.tsv ==="
+log "\n=== Updating participants.tsv ===" >> $log_file
 
 participants_tsv="${BASE_DIR}/participants.tsv"
 
-# Find all existing sub-* directories in the BIDS root
+# Collect current subjects (directories named sub-*)
 current_subjs=($(find "$BASE_DIR" -maxdepth 1 -type d -name "sub-*" -exec basename {} \; | sort))
 
 if [ ${#current_subjs[@]} -eq 0 ]; then
-    log "No sub-* directories found in $BASE_DIR; skipping participants.tsv update."
-else
-    # Call create_tsv.sh.
-    #    - Pass: <TSV_FILE> <NUM_COLUMNS> <COLUMN1> <list-of-rows>
-    #    - Each subject ID (like sub-01, sub-02) is given as one row.
+    log "No sub-* directories found in $BASE_DIR; skipping participants.tsv update." >> $log_file
+    exit 0
+fi
+
+# Attempt to read dicom_metadata.json to add 'age' and 'sex' columns
+dicom_metadata="${dcm_dir}/dicom_metadata.json"
+
+
+if [ -f "$dicom_metadata" ]; then
+    log "\nFound dicom_metadata.json, adding 'age' and 'sex' columns to participants.tsv..." >> $log_file
+
+    # Build arrays with the same ordering as current_subjs
+    declare -a ages
+    declare -a sexes
+
+    for s in "${current_subjs[@]}"; do
+        subject_age=$(jq -r ".[\"$s\"].age // \"\"" "$dicom_metadata")
+        subject_sex=$(jq -r ".[\"$s\"].sex // \"\"" "$dicom_metadata")
+        ages+=( "$subject_age" )
+        sexes+=( "$subject_sex" )
+    done
+
+    ##############################################################################
+    # Build row strings for each subject, so each TSV row looks like:
+    # "sub-01 79 M"
+    # "sub-02 82 F"
+    # etc.
+    ##############################################################################
+    declare -a row_data=()
+    for i in "${!current_subjs[@]}"; do
+        row_data+=("${current_subjs[i]}\t${ages[i]}\t${sexes[i]}")
+    done
+
+    ##############################################################################
+    # Call create_tsv.sh, passing one row string per element in 'row_data[@]'
+    ##############################################################################
     bash "${script_dir}/create_tsv.sh" \
-         "${participants_tsv}" \
-         1 participant_id \
+         "$participants_tsv" \
+         3 \
+         "participant_id" "age" "sex" \
+         "${row_data[@]}"
+
+else
+    # Original 1-column mode...
+    bash "${script_dir}/create_tsv.sh" \
+         "$participants_tsv" \
+         1 \
+         "participant_id" \
          "${current_subjs[@]}"
 fi
 
