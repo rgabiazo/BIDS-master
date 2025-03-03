@@ -57,9 +57,9 @@ study_params:
   study_description: ""  # If empty, the script will prompt
   patient_name: ""       # If empty, the script will prompt
 
-session_map:
-  baseline: "01"
-  endpoint: "02"
+session_map: # Optional session mapping
+  01: "01"
+  02: "02"
 
 bids:
   root: ""
