@@ -58,7 +58,7 @@ study_params:
   patient_name: ""       # If empty, the script will prompt
 
 session_map: # Optional session mapping
-    # Add mapping here
+    # Add session maps here
     
 bids:
   root: ""

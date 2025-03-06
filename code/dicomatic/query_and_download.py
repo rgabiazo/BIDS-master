@@ -8,7 +8,7 @@ and downloading the queried DICOM studies into a BIDS-like directory structure.
 Supports three modes:
   1) Search by Study Description
   2) Search by Patient Name
-  3) Match local BIDS subjects/sessions in sourcedata/Dicom
+  3) Match local BIDS subjects/sessions in sourcedata/dicom
 """
 
 import os
@@ -389,7 +389,7 @@ def main():
     Provides a menu-driven interface for various query modes:
       1) By StudyDescription
       2) By PatientName
-      3) By local BIDS subjects in /sourcedata/Dicom
+      3) By local BIDS subjects in /sourcedata/dicom
 
     Returns:
         None
@@ -435,7 +435,7 @@ def main():
         print("\nWhich query+download mode do you want?")
         print(" 1) By StudyDescription (list multiple studies)")
         print(" 2) By PatientName (search for a specific participant)")
-        print(" 3) By local BIDS subjects in /sourcedata/Dicom\n")
+        print(" 3) By local BIDS subjects in /sourcedata/dicom\n")
         choice = input("Enter 1, 2, or 3.\n> ").strip()
         if choice in ("1", "2", "3"):
             break
@@ -568,7 +568,7 @@ def main():
 
         # Setup output directory
         project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
-        tar_dir = os.path.join(project_root, "sourcedata", "Tar")
+        tar_dir = os.path.join(project_root, "sourcedata", "tar")
         os.makedirs(tar_dir, exist_ok=True)
 
         print("\n============== RUNNING DICOMATIC DOCKER COMMANDS  ==============\n")
@@ -659,7 +659,7 @@ def main():
                 s["ses_label"] = maybe_ses
 
         project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
-        tar_dir = os.path.join(project_root, "sourcedata", "Tar")
+        tar_dir = os.path.join(project_root, "sourcedata", "tar")
         os.makedirs(tar_dir, exist_ok=True)
 
         print("\n============== RUNNING DICOMATIC DOCKER COMMANDS  ==============\n")
@@ -681,7 +681,7 @@ def main():
     # ==========================================
     elif choice == "3":
         project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
-        bids_root = os.path.join(project_root, "sourcedata", "Dicom")
+        bids_root = os.path.join(project_root, "sourcedata", "dicom")
         print(f"[INFO] Searching for sub-* folders in: {bids_root}")
 
         subjects_dict = list_subject_folders(bids_root)
