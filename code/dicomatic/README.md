@@ -34,8 +34,8 @@ BIDS-YourProject/
 │       ├── requirements.txt
 │       └── README.md                 <-- Documentation for this folder
 └── sourcedata/
-    ├── Dicom/                       
-    └── Tar/                          
+    ├── dicom/                       
+    └── tar/                          
 </pre>
 
 - **query_and_download.py** is the primary script to run.
@@ -118,7 +118,7 @@ A menu will appear prompting you to choose one of three modes:
 2. **By Patient Name**  
    Prompts for a single `PatientName` (e.g. “2025_01_01_001_baseline”).
 3. **By Local BIDS Folder**  
-   Scans `sourcedata/Dicom/sub-*/ses-*` and checks the server for matches to download.
+   Scans `sourcedata/dicom/sub-*/ses-*` and checks the server for matches to download.
 
 After DICOMATIC retrieves a list of studies, it offers to download them. The actual download uses cfmm2tar behind the scenes and creates .tar archives in either sourcedata/Tar/ (modes 1 & 2) or directly in each session folder (mode 3).
 
@@ -137,10 +137,10 @@ After DICOMATIC retrieves a list of studies, it offers to download them. The act
   Which query+download mode do you want?
   1) By StudyDescription
   2) By PatientName
-  3) By local BIDS subjects in /sourcedata/Dicom
+  3) By local BIDS subjects in /sourcedata/dicom
   > 3
 
-  [INFO] Searching for sub-* folders in: /path/to/BIDS-YourProject/sourcedata/Dicom
+  [INFO] Searching for sub-* folders in: /path/to/BIDS-YourProject/sourcedata/dicom
   Found X studies matching local BIDS subjects/sessions.
   ...
    ```
