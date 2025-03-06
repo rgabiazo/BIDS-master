@@ -5,9 +5,9 @@
 #
 # Purpose:
 #   1) Renames "BIDS-master" to "BIDS-<ProjectName>"
-#   2) Creates a minimal "dataset_description.json"
+#   2) Creates a minimal "dataset_description.json" using bids_version from code/config/config.yaml
 #   3) Prompts for #subjects & #sessions, then calls "setup_dir.sh" to create:
-#      - sourcedata/Dicom
+#      - sourcedata/dicom
 #      - (optional) a custom events directory
 #
 # Usage:
@@ -91,12 +91,28 @@ mv "$SCRIPT_DIR" "$PARENT_DIR/$PROJECT_NAME"
 PROJECT_DIR="$PARENT_DIR/$PROJECT_NAME"
 
 ###########################################
-# 3) Create dataset_description.json
+# 3) Load BIDS version from config.yaml, create dataset_description.json
 ###########################################
+CONFIG_FILE="$PROJECT_DIR/code/config/config.yaml"
+DEFAULT_BIDS_VERSION="1.10.0"
+BIDS_VERSION="$DEFAULT_BIDS_VERSION"
+
+if [ -f "$CONFIG_FILE" ]; then
+    # Attempt to parse bids_version from config
+    LOADED_VERSION=$(awk -F': ' '/^bids_version:/ {print $2}' "$CONFIG_FILE" | tr -d '"')
+    if [ -n "$LOADED_VERSION" ]; then
+        BIDS_VERSION="$LOADED_VERSION"
+    else
+        echo "Warning: Could not parse 'bids_version' in $CONFIG_FILE. Using default $DEFAULT_BIDS_VERSION"
+    fi
+else
+    echo "Warning: config.yaml not found. Using default $DEFAULT_BIDS_VERSION"
+fi
+
 cat <<EOF > "$PROJECT_DIR/dataset_description.json"
 {
   "Name": "$PROJECT_NAME",
-  "BIDSVersion": "1.10.0",
+  "BIDSVersion": "$BIDS_VERSION",
   "DatasetType": "raw"
 }
 EOF

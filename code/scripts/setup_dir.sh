@@ -3,7 +3,7 @@
 ###############################################################################
 # setup_dir.sh
 #
-# Purpose: Creates subject/session directories in `sourcedata/Dicom` and/or a custom events directory,
+# Purpose: Creates subject/session directories in `sourcedata/dicom` and/or a custom events directory,
 #          with optional zero-padding for subject IDs via -subject_label.
 #
 # Usage examples:
@@ -14,7 +14,7 @@
 #   setup_dir.sh -subject_prefix subj -subject_label 00 -dcm -events custom_txt -num_sub 3 -sessions 01 02
 #
 # Options:
-#   -dcm                Create subject/session folders in sourcedata/Dicom
+#   -dcm                Create subject/session folders in sourcedata/dicom
 #   -events NAME        Create subject/session folders in sourcedata/NAME
 #   -subject_prefix STR Subject prefix (default: 'sub'), e.g. 'subj' => subj-01
 #   -subject_label 0    Zero-padding control: '0' => sub-01, '00' => sub-001, etc.
@@ -37,7 +37,7 @@ SESSION_NAMES=()
 
 usage() {
   echo "Usage: $0 [options]"
-  echo "  -dcm                  Create subject/session folders in 'sourcedata/Dicom'"
+  echo "  -dcm                  Create subject/session folders in 'sourcedata/dicom'"
   echo "  -events NAME          Create subject/session folders in 'sourcedata/NAME'"
   echo "  -subject_prefix STR   Subject folder prefix (default: 'sub')"
   echo "  -subject_label 0      Zero-padding control: '0' => 2-digit, '00' => 3-digit, etc."
@@ -125,7 +125,7 @@ CREATED_EVENTS_SUBJECTS=0
 # If -dcm was requested
 #####################################
 if [ "$DICOM" = true ]; then
-  DICOM_DIR="$PROJECT_DIR/sourcedata/Dicom"
+  DICOM_DIR="$PROJECT_DIR/sourcedata/dicom"
   [ ! -d "$DICOM_DIR" ] && mkdir -p "$DICOM_DIR"
 
   for (( i=1; i<=NUM_SUBJECTS; i++ )); do

@@ -44,7 +44,7 @@
 # Requirements:
 #   - dcm2niix installed and on your PATH.
 #   - A DICOM folder structure like:
-#        sourcedata/Dicom/sub-01/ses-01/*.zip
+#        sourcedata/dicom/sub-01/ses-01/*.zip
 #     or pre-unzipped subfolders.
 #   - Write permissions to create BIDS subfolders in the project root.
 #
@@ -83,8 +83,8 @@ EOM
 script_dir="$(dirname "$(realpath "$0")")"
 BASE_DIR="$(dirname "$(dirname "$script_dir")")"
 
-dcm_dir="${BASE_DIR}/sourcedata/Dicom"
-nifti_dir="${BASE_DIR}/sourcedata/Nifti"
+dcm_dir="${BASE_DIR}/sourcedata/dicom"
+nifti_dir="${BASE_DIR}/sourcedata/nifti"
 bids_dir="${BASE_DIR}"
 log_dir="${BASE_DIR}/code/logs"
 
@@ -566,8 +566,8 @@ process_diffusion_scans() {
 for subj in "${subjects[@]}"; do
     log "\n=== Processing subject: $subj ==="
 
-    local_subj_dir="$dcm_dir/$subj"      # e.g. /path/to/Dicom/sub-01
-    nifti_subj_dir="$nifti_dir/$subj"    # e.g. /path/to/Nifti/sub-01
+    local_subj_dir="$dcm_dir/$subj"      # e.g. /path/to/dicom/sub-01
+    nifti_subj_dir="$nifti_dir/$subj"    # e.g. /path/to/nifti/sub-01
 
     # -------------------------------------------
     # (A) Gather session folders from DICOM
