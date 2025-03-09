@@ -14,6 +14,18 @@
 #   2. Run the script:
 #      ./feat_first_level_analysis.sh
 #
+# Configuration:
+#   - This script reads settings from a YAML config file located at:
+#        <BIDS_BASE>/code/config/config.yaml
+#     That config must define:
+#        fsl.level-1.preprocess_output_dir
+#        fsl.level-1.aroma_output_dir
+#        fsl.level-1.analysis_output_dir
+#        fsl.level-1.analysis_postICA_output_dir
+#        bids_version
+#     and any dataset_description fields you plan to use (e.g. under
+#     dataset_descriptions.level-1.*).
+#
 # Options:
 #   - Prompts for various choices:
 #       * Base directory (BIDS root).
@@ -35,15 +47,29 @@
 #   - Python2.7 (if using ICA-AROMA) or a Python environment that can run ICA-AROMA.
 #   - BIDS dataset with subject directories named like sub-01 or sub-002, etc.
 #   - FSF templates with placeholders for substitution.
+#   - 'yq' installed (for reading YAML).
 #
 # Notes:
 #   - Outputs are placed under derivatives/fsl/level-1, categorized by whether
-#     ICA-AROMA and/or main stats are performed.
+#     ICA-AROMA and/or main stats are performed, but the exact output paths
+#     are also controlled by config.yaml fields such as:
+#         fsl.level-1.preprocess_output_dir
+#         fsl.level-1.analysis_output_dir
+#         ...
 ###############################################################################
 
+# Check if yq is installed
+if ! command -v yq &> /dev/null
+then
+  echo -e "\nERROR: 'yq' (YAML processor) not found in your PATH. Please install yq.\n"
+  exit 1
+fi
+
+# Load Paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR_DEFAULT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# Prompt for the BIDS base directory
 echo -e "\n=== First-Level Analysis: Preprocessing & Statistics ===\n"
 echo -ne "Please enter the base directory or press Enter/Return to use the default [${BASE_DIR_DEFAULT}]: \n> "
 read base_dir_input
@@ -52,11 +78,41 @@ if [ -n "$base_dir_input" ]; then
 else
   BASE_DIR="$BASE_DIR_DEFAULT"
 fi
-echo -e "\nUsing base directory: $BASE_DIR\n"
+echo -e "Using base directory: $BASE_DIR\n"
+
+# Load config.yaml
+CONFIG_FILE="${BASE_DIR}/code/config/config.yaml"
+
+### Read from the config.yaml
+PREPROC_PARENT_DIR="$(yq e '.fsl.level-1.preprocess_output_dir' "$CONFIG_FILE")"
+AROMA_PARENT_DIR="$(yq e '.fsl.level-1.aroma_output_dir' "$CONFIG_FILE")"
+ANALYSIS_PARENT_DIR="$(yq e '.fsl.level-1.analysis_output_dir' "$CONFIG_FILE")"
+ANALYSIS_POSTICA_PARENT_DIR="$(yq e '.fsl.level-1.analysis_postICA_output_dir' "$CONFIG_FILE")"
+
+BIDS_VERSION="$(yq e '.bids_version' "$CONFIG_FILE")"
+
+# Read from config.yaml
+# ============== PREPROCESSING PRE ICA-AROMA PARSING ==============
+PREPROC_DS_NAME="$(yq e '.dataset_descriptions.level-1.preprocessing_preICA.name' "$CONFIG_FILE")"
+PREPROC_DS_TYPE="$(yq e '.dataset_descriptions.level-1.preprocessing_preICA.dataset_type' "$CONFIG_FILE")"
+PREPROC_DS_DESC="$(yq e '.dataset_descriptions.level-1.preprocessing_preICA.description' "$CONFIG_FILE")"
+
+# ============== ICA-AROMA BLOCK ==============
+AROMA_DS_NAME="$(yq e '.dataset_descriptions.level-1.aroma.name' "$CONFIG_FILE")"
+AROMA_DS_TYPE="$(yq e '.dataset_descriptions.level-1.aroma.dataset_type' "$CONFIG_FILE")"
+AROMA_DS_DESC="$(yq e '.dataset_descriptions.level-1.aroma.description' "$CONFIG_FILE")"
+
+# ============== FEAT ANALYSIS (or 'analysis') BLOCK ==============
+FEAT_DS_NAME="$(yq e '.dataset_descriptions.level-1.feat_analysis.name' "$CONFIG_FILE")"
+FEAT_DS_TYPE="$(yq e '.dataset_descriptions.level-1.feat_analysis.dataset_type' "$CONFIG_FILE")"
+FEAT_DS_DESC="$(yq e '.dataset_descriptions.level-1.feat_analysis.description' "$CONFIG_FILE")"
 
 DESIGN_FILES_DIR="${BASE_DIR}/code/design_files"
 
-# Prompt for ICA-AROMA
+###############################################################################
+# Prompt for analysis choices
+###############################################################################
+# 1) ICA-AROMA
 while true; do
   echo -ne "Do you want to apply ICA-AROMA? (y/n): "
   read apply_ica_aroma
@@ -92,7 +148,7 @@ while true; do
   esac
 done
 
-# Prompt for slice timing correction
+# 2) Slice timing correction
 while true; do
   echo -ne "Do you want to apply slice timing correction? (y/n): "
   read apply_slice_timing
@@ -111,7 +167,7 @@ while true; do
   esac
 done
 
-# Prompt for BBR
+# 3) BBR
 while true; do
   echo -ne "Do you want to use Boundary-Based Registration (BBR)? (y/n): "
   read use_bbr_input
@@ -130,7 +186,7 @@ while true; do
   esac
 done
 
-# If ICA-AROMA, prompt nuisance regression & stats
+# 4) If ICA-AROMA, prompt nuisance regression & stats
 apply_nuisance_regression=false
 apply_aroma_stats=false
 if [ "$ica_aroma" = true ]; then
@@ -171,7 +227,10 @@ if [ "$ica_aroma" = true ]; then
   done
 fi
 
-# Function to select a design file
+###############################################################################
+# FSF Design File Selection
+###############################################################################
+
 select_design_file() {
   local search_pattern="$1"
   local exclude_pattern="$2"
@@ -187,8 +246,11 @@ select_design_file() {
     echo "No design files found with pattern '$search_pattern' in $DESIGN_FILES_DIR."
     exit 1
   elif [ ${#design_files[@]} -eq 1 ]; then
+    # Only one match
     DEFAULT_DESIGN_FILE="${design_files[0]}"
   else
+    # Multiple matches
+    echo ""
     echo "Multiple design files found:"
     PS3="Select the design file (enter a number): "
     select selected_design_file in "${design_files[@]}"; do
@@ -202,36 +264,55 @@ select_design_file() {
   fi
 }
 
+###############################################################################
 # Decide design files
+###############################################################################
 if [ "$ica_aroma" = true ]; then
   if [ "$apply_aroma_stats" = true ]; then
-    select_design_file "*ICA-AROMA_stats_design.fsf"
-    echo -e "\nPlease enter the path for the ICA-AROMA main analysis design.fsf or press Enter/Return for [$DEFAULT_DESIGN_FILE]:"
+    echo -e "Please enter the path for the ICA-AROMA main analysis design.fsf or press Enter/Return for [${DESIGN_FILES_DIR}]:"
     echo -ne "> "
     read design_file_input
-    [ -n "$design_file_input" ] && design_file="$design_file_input" || design_file="$DEFAULT_DESIGN_FILE"
-    echo -e "\nUsing ICA-AROMA main analysis design file: $design_file"
+    if [ -n "$design_file_input" ]; then
+      design_file="$design_file_input"
+    else
+      select_design_file "*ICA-AROMA_stats_design.fsf"
+      design_file="$DEFAULT_DESIGN_FILE"
+    fi
+    echo -e "Using ICA-AROMA main analysis design file: $design_file"
   else
     design_file=""
   fi
 
-  select_design_file "*ICA-AROMA_preproc_design.fsf"
-  echo -e "\nPlease enter the path for the ICA-AROMA preprocessing design.fsf or press Enter/Return for [$DEFAULT_DESIGN_FILE]:"
+  echo -e "\nPlease enter the path for the ICA-AROMA preprocessing design.fsf or press Enter/Return for [${DESIGN_FILES_DIR}]:"
   echo -ne "> "
   read preproc_design_file_input
-  [ -n "$preproc_design_file_input" ] && preproc_design_file="$preproc_design_file_input" || preproc_design_file="$DEFAULT_DESIGN_FILE"
-  echo -e "\nUsing ICA-AROMA preprocessing design file: $preproc_design_file"
+  if [ -n "$preproc_design_file_input" ]; then
+    preproc_design_file="$preproc_design_file_input"
+  else
+    select_design_file "*ICA-AROMA_preproc_design.fsf"
+    preproc_design_file="$DEFAULT_DESIGN_FILE"
+  fi
+  echo -e "Using ICA-AROMA preprocessing design file: $preproc_design_file"
+
 else
-  select_design_file "task-*.fsf" "*ICA-AROMA_stats*"
-  echo -e "\nPlease enter the path for the main analysis design.fsf or press Enter/Return for [$DEFAULT_DESIGN_FILE]:"
+  echo -e "\nPlease enter the path for the main analysis design.fsf or press Enter/Return for [${DESIGN_FILES_DIR}]:"
   echo -ne "> "
   read design_file_input
-  [ -n "$design_file_input" ] && design_file="$design_file_input" || design_file="$DEFAULT_DESIGN_FILE"
-  echo -e "\nUsing main analysis design file: $design_file"
+  if [ -n "$design_file_input" ]; then
+    design_file="$design_file_input"
+  else
+    select_design_file "task-*.fsf" "*ICA-AROMA_stats*"
+    design_file="$DEFAULT_DESIGN_FILE"
+  fi
+  echo -e "Using main analysis design file: $design_file"
+
   preproc_design_file=""
 fi
 
-# Skull-stripped T1
+###############################################################################
+# Skull-stripped T1 selection
+###############################################################################
+
 while true; do
   echo -e "\nSelect the skull-stripped T1 images directory or press Enter/Return for [BET]:"
   echo "1. BET skull-stripped T1 images"
@@ -260,16 +341,22 @@ else
   skull_strip_dir="$BET_DIR"
 fi
 
+# Setup data directories
 TOPUP_OUTPUT_BASE="${BASE_DIR}/derivatives/fsl/topup"
 ICA_AROMA_DIR="${BASE_DIR}/derivatives/ICA_AROMA"
 CUSTOM_EVENTS_DIR="${BASE_DIR}/derivatives/custom_events"
 SLICE_TIMING_DIR="${BASE_DIR}/derivatives/slice_timing"
 
+###############################################################################
+# Logging
+###############################################################################
 LOG_DIR="${BASE_DIR}/code/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/feat_first_level_analysis_$(date +%Y-%m-%d_%H-%M-%S).log"
 
-# Prompt for field map corrected runs
+###############################################################################
+# Fieldmap (Topup) selection
+###############################################################################
 fieldmap_corrected=false
 while true; do
   echo -ne "Do you want to use field map corrected runs? (y/n): "
@@ -289,7 +376,9 @@ while true; do
   esac
 done
 
-# Decide if need to prompt for EVs
+###############################################################################
+# Prompt for EVs choice
+###############################################################################
 prompt_for_evs=false
 if [ "$ica_aroma" = false ]; then
   prompt_for_evs=true
@@ -297,7 +386,9 @@ elif [ "$ica_aroma" = true ] && [ "$apply_aroma_stats" = true ]; then
   prompt_for_evs=true
 fi
 
-# Prompt for high-pass filtering (only if doing main analysis)
+###############################################################################
+# High-pass filtering (only if main analysis)
+###############################################################################
 highpass_filtering=false
 highpass_cutoff=0
 if [ "$prompt_for_evs" = true ]; then
@@ -328,7 +419,9 @@ if [ "$prompt_for_evs" = true ]; then
   done
 fi
 
-# Prompt for EVs if needed
+###############################################################################
+# Prompt for EVs selection
+###############################################################################
 EV_NAMES=()
 num_evs=0
 if [ "$prompt_for_evs" = true ]; then
@@ -351,7 +444,9 @@ if [ "$prompt_for_evs" = true ]; then
   done
 fi
 
-# Prompt for template
+###############################################################################
+# Template selection
+###############################################################################
 DEFAULT_TEMPLATE="${BASE_DIR}/derivatives/templates/MNI152_T1_2mm_brain.nii.gz"
 echo -e "\nEnter template path or press Enter/Return for [$DEFAULT_TEMPLATE]:"
 echo -ne "> "
@@ -374,7 +469,9 @@ fi
 IFS=$'\n' SUBJECTS_ARRAY=($(sort -V <<<"${SUBJECTS_ARRAY[*]}"))
 unset IFS
 
-# Prompt for sessions
+###############################################################################
+# Prompt for Subjects, Sessions, Runs
+###############################################################################
 echo -e "\nEnter session IDs (e.g., ses-01 ses-02), or press Enter/Return for all sessions:"
 echo -ne "> "
 read sessions_input
@@ -384,7 +481,9 @@ echo -e "\nEnter run numbers (e.g., 01 02), or press Enter/Return for all runs:"
 echo -ne "> "
 read runs_input
 
-# Helper: find T1
+###############################################################################
+# Helper Functions
+###############################################################################
 get_t1_image_path() {
   local subject=$1
   local session=$2
@@ -475,7 +574,9 @@ get_ev_txt_files() {
   echo "${ev_txt_files[@]}"
 }
 
-# Main processing
+###############################################################################
+# Main Processing Loop
+###############################################################################
 for subject in "${SUBJECTS_ARRAY[@]}"; do
   echo -e "\n=== PROCESSING SUBJECT: $subject ==="
   if [ -n "$sessions_input" ]; then
@@ -571,9 +672,9 @@ for subject in "${SUBJECTS_ARRAY[@]}"; do
         if [ "$apply_aroma_stats" = false ]; then
           # Preproc only
           if [ -n "$task_name" ]; then
-            preproc_output_dir="${BASE_DIR}/derivatives/fsl/level-1/preprocessing_preICA/${subject}/${session}/func/${subject}_${session}_task-${task_name}_${run_label}.feat"
+            preproc_output_dir="${BASE_DIR}/${PREPROC_PARENT_DIR}/${subject}/${session}/func/${subject}_${session}_task-${task_name}_${run_label}.feat"
           else
-            preproc_output_dir="${BASE_DIR}/derivatives/fsl/level-1/preprocessing_preICA/${subject}/${session}/func/${subject}_${session}_${run_label}.feat"
+            preproc_output_dir="${BASE_DIR}/${PREPROC_PARENT_DIR}/${subject}/${session}/func/${subject}_${session}_${run_label}.feat"
           fi
           cmd+=" --preproc-output-dir \"$preproc_output_dir\""
           echo -e "\n--- FEAT Preprocessing (ICA-AROMA only) ---"
@@ -582,11 +683,11 @@ for subject in "${SUBJECTS_ARRAY[@]}"; do
         else
           # Preproc + stats
           if [ -n "$task_name" ]; then
-            preproc_output_dir="${BASE_DIR}/derivatives/fsl/level-1/preprocessing_preICA/${subject}/${session}/func/${subject}_${session}_task-${task_name}_${run_label}.feat"
-            analysis_output_dir="${BASE_DIR}/derivatives/fsl/level-1/analysis_postICA/${subject}/${session}/func/${subject}_${session}_task-${task_name}_${run_label}.feat"
+            preproc_output_dir="${BASE_DIR}/${PREPROC_PARENT_DIR}/${subject}/${session}/func/${subject}_${session}_task-${task_name}_${run_label}.feat"
+            analysis_output_dir="${BASE_DIR}/${ANALYSIS_POSTICA_PARENT_DIR}/${subject}/${session}/func/${subject}_${session}_task-${task_name}_${run_label}.feat"
           else
-            preproc_output_dir="${BASE_DIR}/derivatives/fsl/level-1/preprocessing_preICA/${subject}/${session}/func/${subject}_${session}_${run_label}.feat"
-            analysis_output_dir="${BASE_DIR}/derivatives/fsl/level-1/analysis_postICA/${subject}/${session}/func/${subject}_${session}_${run_label}.feat"
+            preproc_output_dir="${BASE_DIR}/${PREPROC_PARENT_DIR}/${subject}/${session}/func/${subject}_${session}_${run_label}.feat"
+            analysis_output_dir="${BASE_DIR}/${ANALYSIS_POSTICA_PARENT_DIR}/${subject}/${session}/func/${subject}_${session}_${run_label}.feat"
           fi
           cmd+=" --preproc-output-dir \"$preproc_output_dir\" --analysis-output-dir \"$analysis_output_dir\""
           cmd+=" --design-file \"$design_file\""
@@ -600,9 +701,9 @@ for subject in "${SUBJECTS_ARRAY[@]}"; do
       else
         # Non-ICA-AROMA
         if [ -n "$task_name" ]; then
-          output_dir="${BASE_DIR}/derivatives/fsl/level-1/analysis/${subject}/${session}/func/${subject}_${session}_task-${task_name}_${run_label}.feat"
+          output_dir="${BASE_DIR}/${ANALYSIS_PARENT_DIR}/${subject}/${session}/func/${subject}_${session}_task-${task_name}_${run_label}.feat"
         else
-          output_dir="${BASE_DIR}/derivatives/fsl/level-1/analysis/${subject}/${session}/func/${subject}_${session}_${run_label}.feat"
+          output_dir="${BASE_DIR}/${ANALYSIS_PARENT_DIR}/${subject}/${session}/func/${subject}_${session}_${run_label}.feat"
         fi
         cmd+=" --design-file \"$design_file\""
         cmd+=" --t1-image \"$t1_image\" --func-image \"$func_image\" --template \"$TEMPLATE\""

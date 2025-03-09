@@ -60,11 +60,11 @@ BIDS-YourProject/
    git clone https://github.com/khanlab/cfmm2tar
    cd cfmm2tar
    ```
-3.	Build the image:
+3.    Build the image:
    ```bash
   docker build -t cfmm2tar .
    ```
-4.	Test by running:
+4.    Test by running:
    ```bash
   docker run --rm -i -t cfmm2tar
    ```
@@ -153,7 +153,7 @@ You can then filter the studies to download by typing session labels, subject la
 
 - **Credential Prompts**  
      If you’re repeatedly prompted for credentials, ensure that either:
-    - 	You’ve updated config.yaml with your correct username / password, or
+    -     You’ve updated config.yaml with your correct username / password, or
     - You’ve placed a .secrets/uwo_credentials file in the project root with valid credentials.
 
 - **No Studies Found**  

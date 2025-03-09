@@ -36,6 +36,11 @@
 #   --apply-nuisance-reg         : Apply nuisance regression after ICA-AROMA
 #   --help, -h                   : Display this help text
 #
+# Requirements:
+#   - FSL
+#   - yq
+#   - Python 2.7 in PATH (to run ICA-AROMA)
+#
 # Notes:
 #   Steps:
 #       1. Preprocess (FEAT) + optional ICA-AROMA
@@ -44,8 +49,15 @@
 #       4. Creates/updates dataset_description.json in the top-level derivative dir
 #
 #   Additional environment:
-#       - FSLDIR: The root of your FSL installation (used to get FSL version).
+#       - FSLDIR: The root of FSL installation (used to get FSL version).
+#       - 'yq' must be installed and in PATH for reading config.yaml.
 #
+#   Config usage:
+#       - This script reads a config.yaml (by default at code/config/config.yaml) for:
+#         * BIDS version
+#         * dataset_descriptions fields (Name, DatasetType, Description)
+#         * 'generatedby' arrays specifying FSL, ICA-AROMA version, etc.
+#       - By doing so, it automatically populates the dataset_description.json
 ###############################################################################
 
 usage() {
@@ -84,10 +96,139 @@ if [ $# -eq 0 ]; then
   usage
 fi
 
+# Load directories
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 BASE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 ICA_AROMA_SCRIPT="$BASE_DIR/code/ICA-AROMA-master/ICA_AROMA.py"
 
+# Acquire FSL
+FSL_VERSION="Unknown"
+if [ -n "$FSLDIR" ] && [ -f "$FSLDIR/etc/fslversion" ]; then
+  FSL_VERSION=$(cat "$FSLDIR/etc/fslversion" | cut -d'%' -f1)
+fi
+
+# Load config.yaml
+CONFIG_FILE="${BASE_DIR}/code/config/config.yaml"
+
+# Parse the top-level BIDS version from config
+BIDS_VERSION="$(yq e '.bids_version' "$CONFIG_FILE")"
+
+# Extract the "ICA-AROMA" version from the aroma block in config
+ICA_AROMA_VERSION="$(
+  yq e '.dataset_descriptions.level-1.aroma.generatedby[] 
+        | select(.name == "ICA-AROMA") 
+        | .version' "$CONFIG_FILE"
+)"
+
+# Check if yq is installed
+if ! command -v yq &> /dev/null; then
+  echo -e "\nERROR: 'yq' (YAML processor) not found in your PATH. Please install yq.\n"
+  exit 1
+fi
+
+###############################################################################
+# PARSE dataset_description FIELDS FOR PREPROC, AROMA, ANALYSIS_POSTICA,
+# AND FEAT_ANALYSIS
+###############################################################################
+# 1) For 'preprocessing_preICA'
+PREPROC_DS_NAME="$(yq e '.dataset_descriptions.level-1.preprocessing_preICA.name' "$CONFIG_FILE")"
+PREPROC_DS_TYPE="$(yq e '.dataset_descriptions.level-1.preprocessing_preICA.dataset_type' "$CONFIG_FILE")"
+PREPROC_DS_DESC="$(yq e '.dataset_descriptions.level-1.preprocessing_preICA.description' "$CONFIG_FILE")"
+
+PREPROC_GENERATEDBY=()
+n_preproc_gb=$(yq e '.dataset_descriptions.level-1.preprocessing_preICA.generatedby | length' "$CONFIG_FILE")
+for ((idx=0; idx<n_preproc_gb; idx++)); do
+  gb_name=$(yq e ".dataset_descriptions.level-1.preprocessing_preICA.generatedby[$idx].name" "$CONFIG_FILE")
+  gb_version=$(yq e ".dataset_descriptions.level-1.preprocessing_preICA.generatedby[$idx].version" "$CONFIG_FILE")
+  gb_desc=$(yq e ".dataset_descriptions.level-1.preprocessing_preICA.generatedby[$idx].description" "$CONFIG_FILE")
+  
+  # If the YAML version is "null" but gb_name is "FSL", try to fill from $FSL_VERSION
+  if [ "$gb_name" = "FSL" ] && [ "$gb_version" = "null" ]; then
+    gb_version="$FSL_VERSION"
+  fi
+
+  gb_string="Name=${gb_name}"
+  [ "$gb_version" != "null" ] && gb_string+=",Version=${gb_version}"
+  [ "$gb_desc"   != "null" ] && gb_string+=",Description=${gb_desc}"
+
+  PREPROC_GENERATEDBY+=("$gb_string")
+done
+
+# 2) For 'aroma'
+AROMA_DS_NAME="$(yq e '.dataset_descriptions.level-1.aroma.name' "$CONFIG_FILE")"
+AROMA_DS_TYPE="$(yq e '.dataset_descriptions.level-1.aroma.dataset_type' "$CONFIG_FILE")"
+AROMA_DS_DESC="$(yq e '.dataset_descriptions.level-1.aroma.description' "$CONFIG_FILE")"
+
+AROMA_GENERATEDBY=()
+n_aroma_gb=$(yq e '.dataset_descriptions.level-1.aroma.generatedby | length' "$CONFIG_FILE")
+for ((idx=0; idx<n_aroma_gb; idx++)); do
+  gb_name=$(yq e ".dataset_descriptions.level-1.aroma.generatedby[$idx].name" "$CONFIG_FILE")
+  gb_version=$(yq e ".dataset_descriptions.level-1.aroma.generatedby[$idx].version" "$CONFIG_FILE")
+  gb_desc=$(yq e ".dataset_descriptions.level-1.aroma.generatedby[$idx].description" "$CONFIG_FILE")
+  
+  # If the YAML version is "null" but gb_name is "FSL", try to fill from $FSL_VERSION
+  if [ "$gb_name" = "FSL" ] && [ "$gb_version" = "null" ]; then
+    gb_version="$FSL_VERSION"
+  fi
+
+  gb_string="Name=${gb_name}"
+  [ "$gb_version" != "null" ] && gb_string+=",Version=${gb_version}"
+  [ "$gb_desc"   != "null" ] && gb_string+=",Description=${gb_desc}"
+
+  AROMA_GENERATEDBY+=("$gb_string")
+done
+
+# 3) For 'analysis_postICA'
+POSTICA_DS_NAME="$(yq e '.dataset_descriptions.level-1.analysis_postICA.name' "$CONFIG_FILE")"
+POSTICA_DS_TYPE="$(yq e '.dataset_descriptions.level-1.analysis_postICA.dataset_type' "$CONFIG_FILE")"
+POSTICA_DS_DESC="$(yq e '.dataset_descriptions.level-1.analysis_postICA.description' "$CONFIG_FILE")"
+
+POSTICA_GENERATEDBY=()
+n_postica_gb=$(yq e '.dataset_descriptions.level-1.analysis_postICA.generatedby | length' "$CONFIG_FILE")
+for ((idx=0; idx<n_postica_gb; idx++)); do
+  gb_name=$(yq e ".dataset_descriptions.level-1.analysis_postICA.generatedby[$idx].name" "$CONFIG_FILE")
+  gb_version=$(yq e ".dataset_descriptions.level-1.analysis_postICA.generatedby[$idx].version" "$CONFIG_FILE")
+  gb_desc=$(yq e ".dataset_descriptions.level-1.analysis_postICA.generatedby[$idx].description" "$CONFIG_FILE")
+  
+  # If the YAML version is "null" but gb_name is "FSL", try to fill from $FSL_VERSION
+  if [ "$gb_name" = "FSL" ] && [ "$gb_version" = "null" ]; then
+    gb_version="$FSL_VERSION"
+  fi
+
+  gb_string="Name=${gb_name}"
+  [ "$gb_version" != "null" ] && gb_string+=",Version=${gb_version}"
+  [ "$gb_desc"   != "null" ] && gb_string+=",Description=${gb_desc}"
+
+  POSTICA_GENERATEDBY+=("$gb_string")
+done
+
+# 4) For 'analysis'
+FEAT_DS_NAME="$(yq e '.dataset_descriptions.level-1.feat_analysis.name' "$CONFIG_FILE")"
+FEAT_DS_TYPE="$(yq e '.dataset_descriptions.level-1.feat_analysis.dataset_type' "$CONFIG_FILE")"
+FEAT_DS_DESC="$(yq e '.dataset_descriptions.level-1.feat_analysis.description' "$CONFIG_FILE")"
+
+FEAT_GENERATEDBY=()
+n_feat_gb=$(yq e '.dataset_descriptions.level-1.feat_analysis.generatedby | length' "$CONFIG_FILE")
+for ((idx=0; idx<n_feat_gb; idx++)); do
+  gb_name=$(yq e ".dataset_descriptions.level-1.feat_analysis.generatedby[$idx].name" "$CONFIG_FILE")
+  gb_version=$(yq e ".dataset_descriptions.level-1.feat_analysis.generatedby[$idx].version" "$CONFIG_FILE")
+  gb_desc=$(yq e ".dataset_descriptions.level-1.feat_analysis.generatedby[$idx].description" "$CONFIG_FILE")
+  
+  # If the YAML version is "null" but gb_name is "FSL", try to fill from $FSL_VERSION
+  if [ "$gb_name" = "FSL" ] && [ "$gb_version" = "null" ]; then
+    gb_version="$FSL_VERSION"
+  fi
+
+  gb_string="Name=${gb_name}"
+  [ "$gb_version" != "null" ] && gb_string+=",Version=${gb_version}"
+  [ "$gb_desc"   != "null" ] && gb_string+=",Description=${gb_desc}"
+
+  FEAT_GENERATEDBY+=("$gb_string")
+done
+
+###############################################################################
+# Remaining Variables
+###############################################################################
 EV_FILES=()
 ICA_AROMA=false
 NONLINEAR_REG=false
@@ -277,17 +418,6 @@ adjust_highpass_filter_settings() {
 }
 
 ###############################################################################
-# Acquire FSL version (if possible)
-###############################################################################
-FSL_VERSION="Unknown"
-if [ -n "$FSLDIR" ] && [ -f "$FSLDIR/etc/fslversion" ]; then
-  FSL_VERSION=$(cat "$FSLDIR/etc/fslversion" | cut -d'%' -f1)
-fi
-
-BIDS_VERSION="1.10.0"          # Adjust as you wish or pass in from environment
-ICA_AROMA_VERSION="0.4.4-beta" # Example
-
-###############################################################################
 # Main logic
 ###############################################################################
 npts=$(fslval "$FUNC_IMAGE" dim4 | xargs)
@@ -366,17 +496,23 @@ if [ "$ICA_AROMA" = true ]; then
     rm -f "$MODIFIED_PREPROC_DESIGN_FILE"
     echo "- FEAT preprocessing completed at $PREPROC_OUTPUT_DIR"
 
-    # [ADDED CODE START: Create dataset_description.json in preprocessing_preICA top-level]
+    # Build an array for the --generatedby flags
+    preproc_generatedby_args=()
+    for gb_item in "${PREPROC_GENERATEDBY[@]}"; do
+      preproc_generatedby_args+=(--generatedby "$gb_item")
+    done
+
+     # Pass that array
+     # Create dataset_description.json in preprocessing_preICA top-level
     PREPROC_TOP_DIR="$(get_top_level_analysis_dir "$PREPROC_OUTPUT_DIR")"
     "$SCRIPT_DIR/create_dataset_description.sh" \
       --analysis-dir "$PREPROC_TOP_DIR" \
-      --ds-name "FSL_FEAT_Preprocessing_ICA_AROMA" \
-      --dataset-type "derivative" \
-      --description "FSL FEAT-based preprocessing prior to ICA-AROMA." \
+      --ds-name "$PREPROC_DS_NAME" \
+      --dataset-type "$PREPROC_DS_TYPE" \
+      --description "$PREPROC_DS_DESC" \
       --bids-version "$BIDS_VERSION" \
-      --generatedby "Name=FSL,Version=${FSL_VERSION},Description=Preprocessing pipeline for ICA-AROMA"
-    # [ADDED CODE END]
-
+      "${preproc_generatedby_args[@]}"
+      
     output_dir_name=$(basename "$PREPROC_OUTPUT_DIR" .feat)
     mask_output="${PREPROC_OUTPUT_DIR}/${output_dir_name}_example_func_mask.nii.gz"
     example_func="${PREPROC_OUTPUT_DIR}/example_func.nii.gz"
@@ -436,21 +572,27 @@ if [ "$ICA_AROMA" = true ]; then
     fi
     echo "ICA-AROMA processed successfully."
     echo "- Denoised data at $denoised_func"
+    
+    # Build an array for the --generatedby flags
+    aroma_generatedby_args=()
+    for gb_item in "${AROMA_GENERATEDBY[@]}"; do
+      aroma_generatedby_args+=(--generatedby "$gb_item")
+    done
 
-    # [ADDED CODE START: Create dataset_description.json in aroma top-level]
+    # Create dataset_description.json in aroma top-level
     AROMA_TOP_DIR="$(get_top_level_analysis_dir "$ICA_AROMA_OUTPUT_DIR")"
     "$SCRIPT_DIR/create_dataset_description.sh" \
       --analysis-dir "$AROMA_TOP_DIR" \
-      --ds-name "ICA_AROMA_preprocessing" \
-      --dataset-type "derivative" \
-      --description "ICA-AROMA decomposition and denoising applied to FEAT-preprocessed data." \
+      --ds-name "$AROMA_DS_NAME" \
+      --dataset-type "$AROMA_DS_TYPE" \
+      --description "$AROMA_DS_DESC" \
       --bids-version "$BIDS_VERSION" \
-      --generatedby "Name=ICA-AROMA,Version=${ICA_AROMA_VERSION},Description=Automatic removal of motion-related ICA components"
-    # [ADDED CODE END]
+      "${aroma_generatedby_args[@]}"
 
   else
     echo "ICA-AROMA already processed at $denoised_func"
   fi
+
 
   # 1C. Optional nuisance regression
   echo ""
@@ -609,19 +751,22 @@ if [ "$ICA_AROMA" = true ]; then
       rm -f "$MODIFIED_DESIGN_FILE"
       echo "- FEAT main analysis (post-ICA) completed at $ANALYSIS_OUTPUT_DIR"
     fi
-
-    ########################################################################
-    # Create or update dataset_description.json in the TOP-LEVEL folder
-    ########################################################################
+    
+    # Build an array for the --generatedby flags
+    postica_generatedby_args=()
+    for gb_item in "${POSTICA_GENERATEDBY[@]}"; do
+      postica_generatedby_args+=(--generatedby "$gb_item")
+    done
+    
+    # Create dataset_description.json in analysis_postICA top-level
     TOP_ANALYSIS_DIR="$(get_top_level_analysis_dir "$ANALYSIS_OUTPUT_DIR")"
     "$SCRIPT_DIR/create_dataset_description.sh" \
       --analysis-dir "$TOP_ANALYSIS_DIR" \
-      --ds-name "FSL_FEAT_with_ICA_AROMA" \
-      --dataset-type "derivative" \
-      --description "A first-level fMRI analysis pipeline using custom shell scripts (feat_first_level_analysis.sh & run_feat_analysis.sh) to run FSL FEAT, with optional slice-timing correction, BBR, non-linear registration, ICA-AROMA, and nuisance regression." \
+      --ds-name "$POSTICA_DS_NAME" \
+      --dataset-type "$POSTICA_DS_TYPE" \
+      --description "$POSTICA_DS_DESC" \
       --bids-version "$BIDS_VERSION" \
-      --generatedby "Name=FSL,Version=${FSL_VERSION},Description=Used for motion correction, registration, and FEAT-based statistics." \
-      --generatedby "Name=ICA-AROMA,Version=${ICA_AROMA_VERSION},Description=Used for automatic removal of motion-related components."
+      "${postica_generatedby_args[@]}"
 
   else
     echo ""
@@ -701,17 +846,23 @@ else
     echo "- FEAT main analysis completed at $OUTPUT_DIR"
   fi
 
-  ########################################################################
-  # Create or update dataset_description.json in the TOP-LEVEL folder
-  ########################################################################
+  
+  
+    # Build an array for the --generatedby flags
+    feat_generatedby_args=()
+    for gb_item in "${FEAT_GENERATEDBY[@]}"; do
+      feat_generatedby_args+=(--generatedby "$gb_item")
+    done
+  
+   # Create dataset_description.json in analysis top-level
   TOP_ANALYSIS_DIR="$(get_top_level_analysis_dir "$OUTPUT_DIR")"
   "$SCRIPT_DIR/create_dataset_description.sh" \
     --analysis-dir "$TOP_ANALYSIS_DIR" \
-    --ds-name "FSL_FEAT_FirstLevel" \
-    --dataset-type "derivative" \
-    --description "A first-level fMRI analysis pipeline using custom shell scripts (feat_first_level_analysis.sh & run_feat_analysis.sh) to run FSL FEAT. Optional steps include slice-timing correction, boundary-based registration, non-linear registration, and high-pass filtering." \
+    --ds-name "$FEAT_DS_NAME" \
+    --dataset-type "$FEAT_DS_TYPE" \
+    --description "$FEAT_DS_DESC" \
     --bids-version "$BIDS_VERSION" \
-    --generatedby "Name=FSL,Version=${FSL_VERSION},Description=Used for motion correction, registration, and FEAT-based statistics."
+    "${feat_generatedby_args[@]}"
 fi
 
 # Cleanup extraneous files

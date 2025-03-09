@@ -186,38 +186,52 @@ LOG_FILE="${LOG_DIR}/run_synthstrip_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
                 fi
 
                 echo "T1w Image:  $T1W_FILE" | tee -a "$LOG_FILE"
+                
+                DERIV_ANAT_DIR="$BASE_DIR/derivatives/freesurfer/$SUBJ_ID/$SES_ID/anat"
+                mkdir -p "$DERIV_ANAT_DIR"
+                OUTPUT_FILE="$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_desc-synthstrip_T1w_brain.nii.gz"
 
                 STEP=1
                 # Reorient if requested
                 if [ "$REORIENT" == "yes" ]; then
-                    echo ""
-                    echo "[Step $STEP] Applying fslreorient2std:" | tee -a "$LOG_FILE"
-                    echo "  - Input: $T1W_FILE" | tee -a "$LOG_FILE"
-                    REORIENTED_T1W_FILE="${ANAT_DIR}/${SUBJ_ID}_${SES_ID}_desc-reoriented_T1w.nii.gz"
-                    echo "  - Output (Reoriented): $REORIENTED_T1W_FILE" | tee -a "$LOG_FILE"
-                    fslreorient2std "$T1W_FILE" "$REORIENTED_T1W_FILE"
-                    if [ $? -ne 0 ]; then
-                        echo "Error applying fslreorient2std for $SUBJ_ID $SES_ID" | tee -a "$LOG_FILE"
-                        continue
+                    if [ -f "$OUTPUT_FILE" ]; then
+                        echo "Skull-stripped T1w image already exists: $OUTPUT_FILE" | tee -a "$LOG_FILE"
+                        echo "Skipping reorientation." | tee -a "$LOG_FILE"
+                        echo ""
+                    else
+                        echo ""
+                        echo "[Step $STEP] Applying fslreorient2std:" | tee -a "$LOG_FILE"
+                        echo "  - Input: $T1W_FILE" | tee -a "$LOG_FILE"
+                        REORIENTED_T1W_FILE="${ANAT_DIR}/${SUBJ_ID}_${SES_ID}_desc-reoriented_T1w.nii.gz"
+                        echo "  - Output (Reoriented): $REORIENTED_T1W_FILE" | tee -a "$LOG_FILE"
+                        echo ""
+                        
+                        fslreorient2std "$T1W_FILE" "$REORIENTED_T1W_FILE"
+                        if [ $? -ne 0 ]; then
+                            echo "Error applying fslreorient2std for $SUBJ_ID $SES_ID" | tee -a "$LOG_FILE"
+                            continue
+                        fi
+                        # Update T1W_FILE to point to the newly reoriented file
+                        T1W_FILE="$REORIENTED_T1W_FILE"
+                        STEP=$((STEP+1))
+                        
+                        
                     fi
-                    T1W_FILE="$REORIENTED_T1W_FILE"
-                    STEP=$((STEP+1))
+                        
+                        
+                        
                 fi
 
-                echo ""
                 echo "[Step $STEP] Running SynthStrip:" | tee -a "$LOG_FILE"
                 echo "  - Input: $T1W_FILE" | tee -a "$LOG_FILE"
 
-                DERIV_ANAT_DIR="$BASE_DIR/derivatives/freesurfer/$SUBJ_ID/$SES_ID/anat"
-                mkdir -p "$DERIV_ANAT_DIR"
 
-                OUTPUT_FILE="$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_desc-synthstrip_T1w_brain.nii.gz"
                 echo "  - Command: mri_synthstrip --i \"$T1W_FILE\" --o \"$OUTPUT_FILE\"" | tee -a "$LOG_FILE"
                 echo ""
 
                 if [ -f "$OUTPUT_FILE" ]; then
-                    echo "Skull-stripped T1w image already exists: $OUTPUT_FILE" | tee -a "$LOG_FILE"
-                    echo ""
+                    echo "SynthStrip T1w image already exists: $OUTPUT_FILE" | tee -a "$LOG_FILE"
+                    echo "" 
                 else
                     mri_synthstrip --i "$T1W_FILE" --o "$OUTPUT_FILE"
                     if [ $? -ne 0 ]; then

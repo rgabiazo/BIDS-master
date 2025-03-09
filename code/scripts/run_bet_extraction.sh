@@ -18,23 +18,11 @@
 #   --session <ses>      Session(s) to process (e.g., ses-01)
 #   -h, --help           Show usage info and exit
 #
-# Usage Examples:
-#   1) run_bet_extraction.sh --base-dir /myproj --reorient sub-01
-#   2) run_bet_extraction.sh --base-dir /myproj --bet-option -R --frac 0.3
-#   3) run_bet_extraction.sh --base-dir /myproj --session ses-01 ses-02
-#
-# Requirements:
-#   - FSL's `bet`
-#   - T1w files named <sub>_<ses>_T1w.nii.gz in anat/
-#
-# Notes:
-#   - If no SUBJECTS are specified, it scans for directories with known prefixes
-#     (sub, subj, participant, etc.).
-#   - Creates log in <base-dir>/code/logs. Outputs to <base-dir>/derivatives/fsl.
-#
 ###############################################################################
 
+# ------------------------------------------------------------------------------
 # Default values
+# ------------------------------------------------------------------------------
 BASE_DIR=""
 REORIENT="no"
 BET_OPTION=""
@@ -49,7 +37,7 @@ usage() {
     echo "Options:"
     echo "  --base-dir <dir>     Base directory of the project (required)"
     echo "  --reorient           Apply fslreorient2std to T1w images"
-    echo "  --bet-option <flag>  BET option (e.g. -R, -S, etc.)"
+    echo "  --bet-option <flag>  BET option (e.g. -R, -S, -B)"
     echo "  --frac <value>       Fractional intensity threshold (default: 0.5)"
     echo "  --session <name>     Session(s), e.g., --session ses-01"
     echo "  SUBJECTS             e.g., sub-01 sub-02"
@@ -57,6 +45,9 @@ usage() {
     exit 1
 }
 
+# ------------------------------------------------------------------------------
+# Parse CLI Arguments
+# ------------------------------------------------------------------------------
 POSITIONAL_ARGS=()
 while [[ "$1" != "" ]]; do
     case $1 in
@@ -121,6 +112,9 @@ LOG_DIR="${BASE_DIR}/code/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
 
+# ------------------------------------------------------------------------------
+# Start logging
+# ------------------------------------------------------------------------------
 {
     echo "Base directory: $BASE_DIR" >> "$LOG_FILE"
     echo "Reorient: $REORIENT" >> "$LOG_FILE"
@@ -133,7 +127,11 @@ LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
         echo "Subjects: ${SUBJECTS[@]}" >> "$LOG_FILE"
     fi
     echo "Logging to: $LOG_FILE" >> "$LOG_FILE"
+    echo "" >> "$LOG_FILE"
 
+    # --------------------------------------------------------------------------
+    # Identify subjects
+    # --------------------------------------------------------------------------
     SUBJECT_DIRS=()
     if [ ${#SUBJECTS[@]} -gt 0 ]; then
         # Use the specified subjects
@@ -156,23 +154,30 @@ LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
     fi
 
     if [ ${#SUBJECT_DIRS[@]} -eq 0 ]; then
-        echo -e "\nNo subject directories found.\n" | tee -a "$LOG_FILE"
+        echo -e "\nNo subject directories found." | tee -a "$LOG_FILE"
         exit 1
     fi
 
     echo -e "Found ${#SUBJECT_DIRS[@]} subject directories.\n" | tee -a "$LOG_FILE"
 
+    # --------------------------------------------------------------------------
+    # Main loop: Subjects -> Sessions -> BET extraction
+    # --------------------------------------------------------------------------
     for SUBJ_DIR in "${SUBJECT_DIRS[@]}"; do
         SUBJ_ID="$(basename "$SUBJ_DIR")"
         echo "=== Processing Subject: $SUBJ_ID ===" | tee -a "$LOG_FILE"
 
+        # Collect session directories
         SESSION_DIRS=()
         if [ ${#SESSIONS[@]} -gt 0 ]; then
             # If specific sessions were requested
             for ses in "${SESSIONS[@]}"; do
                 SES_DIR="$SUBJ_DIR/$ses"
-                [ -d "$SES_DIR" ] && SESSION_DIRS+=("$SES_DIR") || \
-                  echo -e "Warning: Session directory not found:\n  - $SES_DIR" | tee -a "$LOG_FILE"
+                if [ -d "$SES_DIR" ]; then
+                    SESSION_DIRS+=("$SES_DIR")
+                else
+                    echo -e "Warning: Session directory not found:\n  - $SES_DIR" | tee -a "$LOG_FILE"
+                fi
             done
         else
             # Otherwise find all ses-* directories
@@ -187,29 +192,58 @@ LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
             continue
         fi
 
+        # Process each session
         for SES_DIR in "${SESSION_DIRS[@]}"; do
             SES_ID="$(basename "$SES_DIR")"
             echo "--- Session: $SES_ID ---" | tee -a "$LOG_FILE"
 
             ANAT_DIR="$SES_DIR/anat"
-            if [ -d "$ANAT_DIR" ]; then
-                T1W_FILE="$ANAT_DIR/${SUBJ_ID}_${SES_ID}_T1w.nii.gz"
-                if [ ! -f "$T1W_FILE" ]; then
-                    echo -e "\nT1w image not found:\n  - $T1W_FILE\n" | tee -a "$LOG_FILE"
-                    continue
-                fi
+            if [ ! -d "$ANAT_DIR" ]; then
+                echo -e "Anatomical directory not found:\n  - $ANAT_DIR\n" | tee -a "$LOG_FILE"
+                continue
+            fi
 
-                echo "T1w Image:  $T1W_FILE" | tee -a "$LOG_FILE"
+            T1W_FILE="$ANAT_DIR/${SUBJ_ID}_${SES_ID}_T1w.nii.gz"
+            if [ ! -f "$T1W_FILE" ]; then
+                echo -e "\nT1w image not found:\n  - $T1W_FILE\n" | tee -a "$LOG_FILE"
+                continue
+            fi
 
-                STEP=1
-                # Reorient step
-                if [ "$REORIENT" == "yes" ]; then
+            echo "T1w Image: $T1W_FILE" | tee -a "$LOG_FILE"
+
+            # ------------------------------------------------------------------
+            # Construct the final output path (skip reorient if needed)
+            # ------------------------------------------------------------------
+            DERIV_ANAT_DIR="$BASE_DIR/derivatives/fsl/$SUBJ_ID/$SES_ID/anat"
+            mkdir -p "$DERIV_ANAT_DIR"
+
+            # Create suffixes for file naming
+            BET_SUFFIX=""
+            if [ -n "$BET_OPTION" ]; then
+                # e.g., -R => "R"
+                BET_SUFFIX="${BET_OPTION:1}"
+            fi
+            FRAC_INT_SUFFIX="f$(echo $FRAC_INTENSITY | sed 's/\.//')"
+
+            OUTPUT_FILE="$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_desc-${BET_SUFFIX}${FRAC_INT_SUFFIX}_T1w_brain.nii.gz"
+
+            STEP=1
+
+            # ------------------------------------------------------------------
+            # [Step] Reorient if requested AND if the final BET file is missing
+            # ------------------------------------------------------------------
+            if [ "$REORIENT" == "yes" ]; then
+                if [ -f "$OUTPUT_FILE" ]; then
+                    echo "Skull-stripped T1w image already exists: $OUTPUT_FILE" | tee -a "$LOG_FILE"
+                    echo "Skipping reorientation (since final output is already present)." | tee -a "$LOG_FILE"
+                    echo ""
+                else
                     echo ""
                     echo "[Step $STEP] Applying fslreorient2std:" | tee -a "$LOG_FILE"
                     echo "  - Input: $T1W_FILE" | tee -a "$LOG_FILE"
-                    # Use 'desc-reoriented'
                     REORIENTED_T1W_FILE="${ANAT_DIR}/${SUBJ_ID}_${SES_ID}_desc-reoriented_T1w.nii.gz"
                     echo "  - Output (Reoriented): $REORIENTED_T1W_FILE" | tee -a "$LOG_FILE"
+                    
                     fslreorient2std "$T1W_FILE" "$REORIENTED_T1W_FILE"
                     if [ $? -ne 0 ]; then
                         echo -e "Error applying fslreorient2std for $SUBJ_ID $SES_ID\n" | tee -a "$LOG_FILE"
@@ -219,58 +253,60 @@ LOG_FILE="${LOG_DIR}/run_bet_extraction_$(date '+%Y-%m-%d_%H-%M-%S').log"
                     STEP=$((STEP+1))
                     echo ""
                 fi
-
-                echo "[Step $STEP] Running BET Brain Extraction:" | tee -a "$LOG_FILE"
-                echo "  - Input: $T1W_FILE" | tee -a "$LOG_FILE"
-
-                DERIV_ANAT_DIR="$BASE_DIR/derivatives/fsl/$SUBJ_ID/$SES_ID/anat"
-                mkdir -p "$DERIV_ANAT_DIR"
-
-                # Copy the T1w (possibly reoriented) to derivatives
-                cp "$T1W_FILE" "$DERIV_ANAT_DIR/"
-
-                BET_SUFFIX=""
-                if [ -n "$BET_OPTION" ]; then
-                    # e.g., -R => BET_SUFFIX="R"
-                    BET_SUFFIX="${BET_OPTION:1}"
-                fi
-                FRAC_INT_SUFFIX="f$(echo $FRAC_INTENSITY | sed 's/\.//')"
-
-                OUTPUT_FILE="$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_desc-${BET_SUFFIX}${FRAC_INT_SUFFIX}_T1w_brain.nii.gz"
-
-                echo "  - Command: bet \"$T1W_FILE\" \"$OUTPUT_FILE\" $BET_OPTION -f \"$FRAC_INTENSITY\"" | tee -a "$LOG_FILE"
-
-                if [ -f "$OUTPUT_FILE" ]; then
-                    echo -e "\nSkull-stripped T1w image already exists:\n  - $OUTPUT_FILE\n" | tee -a "$LOG_FILE"
-                else
-                    bet "$T1W_FILE" "$OUTPUT_FILE" $BET_OPTION -f "$FRAC_INTENSITY"
-                    if [ $? -ne 0 ]; then
-                        echo -e "Error during BET skull stripping for $SUBJ_ID $SES_ID\n" | tee -a "$LOG_FILE"
-                        continue
-                    fi
-
-                    STEP=$((STEP+1))
-                    echo "" | tee -a "$LOG_FILE"
-                    echo "[Step $STEP] Cleaning Up Temporary Files:" | tee -a "$LOG_FILE"
-
-                    if [ "$REORIENT" == "yes" ]; then
-                        echo "  - Removed: $DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_desc-reoriented_T1w.nii.gz" | tee -a "$LOG_FILE"
-                        rm "$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_desc-reoriented_T1w.nii.gz"
-                    else
-                        echo "  - Removed: $DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_T1w.nii.gz" | tee -a "$LOG_FILE"
-                        rm "$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_T1w.nii.gz"
-                    fi
-
-                    echo "" | tee -a "$LOG_FILE"
-                    echo "BET Brain Extraction completed at:" | tee -a "$LOG_FILE"
-                    echo "  - Output: $OUTPUT_FILE" | tee -a "$LOG_FILE"
-                    echo "" | tee -a "$LOG_FILE"
-                fi
-            else
-                echo -e "Anatomical directory not found:\n  - $ANAT_DIR\n" | tee -a "$LOG_FILE"
             fi
-        done
-    done
+
+            # ------------------------------------------------------------------
+            # [Step] Run BET Brain Extraction (only if OUTPUT_FILE is missing)
+            # ------------------------------------------------------------------
+            echo "[Step $STEP] Running BET Brain Extraction:" | tee -a "$LOG_FILE"
+            echo "  - Input: $T1W_FILE" | tee -a "$LOG_FILE"
+            echo "  - Command: bet \"$T1W_FILE\" \"$OUTPUT_FILE\" $BET_OPTION -f \"$FRAC_INTENSITY\"" | tee -a "$LOG_FILE"
+
+            # Optionally copy the T1w into derivatives
+            if [ ! -f "$DERIV_ANAT_DIR/$(basename "$T1W_FILE")" ]; then
+                cp "$T1W_FILE" "$DERIV_ANAT_DIR/"
+            fi
+
+            # Check if the final BET output already exists
+            if [ -f "$OUTPUT_FILE" ]; then
+                echo -e "\nSkull-stripped T1w image already exists:\n  - $OUTPUT_FILE\n" | tee -a "$LOG_FILE"
+            else
+                bet "$T1W_FILE" "$OUTPUT_FILE" $BET_OPTION -f "$FRAC_INTENSITY"
+                if [ $? -ne 0 ]; then
+                    echo -e "Error during BET skull stripping for $SUBJ_ID $SES_ID\n" | tee -a "$LOG_FILE"
+                    continue
+                fi
+
+                STEP=$((STEP+1))
+                echo "" | tee -a "$LOG_FILE"
+                echo "[Step $STEP] Cleaning Up Temporary Files:" | tee -a "$LOG_FILE"
+
+                # If reorientation, remove the reoriented file from derivatives
+                if [ "$REORIENT" == "yes" ]; then
+                    # Decide which file to remove from derivatives:
+                    #   - Copied T1W_FILE to derivatives (the reoriented one).
+                    #   - That file might be named `_desc-reoriented_T1w.nii.gz`.
+                    # Just remove it to avoid clutter.
+                    FILE_TO_REMOVE="$DERIV_ANAT_DIR/$(basename "$T1W_FILE")"
+                    echo "  - Removed: $FILE_TO_REMOVE" | tee -a "$LOG_FILE"
+                    rm "$FILE_TO_REMOVE"
+                else
+                    # If not reoriented, remove the original T1 that was copied
+                    FILE_TO_REMOVE="$DERIV_ANAT_DIR/${SUBJ_ID}_${SES_ID}_T1w.nii.gz"
+                    if [ -f "$FILE_TO_REMOVE" ]; then
+                        echo "  - Removed: $FILE_TO_REMOVE" | tee -a "$LOG_FILE"
+                        rm "$FILE_TO_REMOVE"
+                    fi
+                fi
+
+                echo "" | tee -a "$LOG_FILE"
+                echo "BET Brain Extraction completed at:" | tee -a "$LOG_FILE"
+                echo "  - Output: $OUTPUT_FILE" | tee -a "$LOG_FILE"
+                echo "" | tee -a "$LOG_FILE"
+            fi
+
+        done  # end session loop
+    done      # end subject loop
 
     echo -e "\nBET skull stripping completed."
     echo "------------------------------------------------------------------------------"

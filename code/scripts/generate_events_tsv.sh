@@ -42,7 +42,7 @@
 # Notes:
 #   - The script prompts for a custom output task name (for the TSV filenames).
 #   - It detects multiple directories under sourcedata/ and prompts to choose
-#     one if more than one is present (excluding Dicom, Nifti, code).
+#     one if more than one is present (excluding dicom, nifti, code).
 #   - It reads raw timing text files named like: <task>_response_data_<cond>_run<N>.txt
 #     and merges them into sorted TSV files with columns: onset, duration, trial_type, weight.
 #   - Each subject can have zero or multiple runs per session. The script auto-detects run numbers
@@ -173,13 +173,13 @@ AVAIL_DIRS=()
 for d in "$BASE_DIR/sourcedata/"*/; do
     dir_name=$(basename "$d")
     # Exclude certain directories
-    if [[ "$dir_name" != "Dicom" && "$dir_name" != "Nifti" && "$dir_name" != "code" && "$dir_name" != "" && ! "$dir_name" =~ ^\. ]]; then
+    if [[ "$dir_name" != "dicom" && "$dir_name" != "nifti" && "$dir_name" != "code" && "$dir_name" != "" && ! "$dir_name" =~ ^\. ]]; then
         AVAIL_DIRS+=("$dir_name")
     fi
 done
 
 if [ ${#AVAIL_DIRS[@]} -eq 0 ]; then
-    echo "No directories found under sourcedata (other than Dicom/Nifti/code/hidden) to process raw text files."
+    echo "No directories found under sourcedata (other than dicom/nifti/code/hidden) to process raw text files."
     exit 1
 elif [ ${#AVAIL_DIRS[@]} -eq 1 ]; then
     CHOSEN_DIR="${AVAIL_DIRS[0]}"
